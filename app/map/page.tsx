@@ -93,6 +93,25 @@ function MapContent() {
     fetch("/api/books").then((r) => r.json()).then(setBooks);
   }, [loadGraph]);
 
+  // 解析中の本がある場合、完了したらグラフを自動更新する
+  useEffect(() => {
+    const isAnalyzing = books.some((b) => b.analyzeStatus === "analyzing");
+    if (!isAnalyzing) return;
+    const iv = setInterval(() => {
+      fetch("/api/books")
+        .then((r) => r.json())
+        .then((updated: Book[]) => {
+          setBooks(updated);
+          const stillAnalyzing = updated.some((b) => b.analyzeStatus === "analyzing");
+          if (!stillAnalyzing) {
+            loadGraph();
+            setSelected(null);
+          }
+        });
+    }, 3000);
+    return () => clearInterval(iv);
+  }, [books, loadGraph]);
+
   const handleNodeClick = (nodeId: number) => {
     setHighlightId(nodeId);
     fetch(`/api/concepts/${nodeId}`)
