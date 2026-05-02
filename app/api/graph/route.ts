@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { concepts, conceptRelations, bookConcepts, books } from "@/lib/db/schema";
+import { concepts, conceptRelations, bookConcepts } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 
 export async function GET(req: Request) {
@@ -16,6 +16,7 @@ export async function GET(req: Request) {
       .select({
         id: concepts.id,
         name: concepts.name,
+        aliases: concepts.aliases,
         domain: concepts.domain,
         description: concepts.description,
         bookCount: sql<number>`count(distinct ${bookConcepts.bookId})`,

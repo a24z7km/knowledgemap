@@ -26,17 +26,18 @@ const DOMAIN_LABELS: Record<string, string> = {
   general: "一般",
 };
 
-const RELATION_LABELS: Record<string, string> = {
-  prerequisite: "前提",
-  related: "関連",
-  contradicts: "対立",
-  extends: "拡張",
-  applies_to: "適用",
+const RELATION_LABELS: Record<string, { label: string; color: string; dash?: string }> = {
+  prerequisite: { label: "前提",  color: "#f97316" },
+  related:      { label: "関連",  color: "#94a3b8" },
+  contradicts:  { label: "対立",  color: "#ef4444", dash: "4 2" },
+  extends:      { label: "拡張",  color: "#8b5cf6" },
+  applies_to:   { label: "適用",  color: "#10b981", dash: "1 2" },
 };
 
 interface GraphNode {
   id: number;
   name: string;
+  aliases: string;
   domain: string;
   description: string | null;
   bookCount: number;
@@ -67,6 +68,7 @@ function MapContent() {
   const [domain, setDomain] = useState("all");
   const [bookFilter, setBookFilter] = useState("all");
   const [selected, setSelected] = useState<ConceptDetail | null>(null);
+  const [lang, setLang] = useState<"en" | "ja">("ja");
   const [highlightId, setHighlightId] = useState<number | null>(
     highlightParam ? Number(highlightParam) : null
   );
@@ -126,15 +128,36 @@ function MapContent() {
               ))}
             </SelectContent>
           </Select>
+          <div className="flex rounded-md border overflow-hidden h-8 text-xs">
+            <button
+              onClick={() => setLang("ja")}
+              className={`px-2.5 ${lang === "ja" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+            >
+              JA
+            </button>
+            <button
+              onClick={() => setLang("en")}
+              className={`px-2.5 ${lang === "en" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+            >
+              EN
+            </button>
+          </div>
         </div>
 
         {/* Legend */}
-        <div className="absolute bottom-3 left-3 z-10 bg-background/90 backdrop-blur rounded-lg p-2 shadow-sm border text-xs space-y-1">
+        <div className="absolute bottom-3 right-3 z-10 bg-background/90 backdrop-blur rounded-lg p-2 shadow-sm border text-xs space-y-1">
           <p className="font-medium">エッジの種類</p>
-          {Object.entries(RELATION_LABELS).map(([k, v]) => (
+          {Object.entries(RELATION_LABELS).map(([k, { label, color, dash }]) => (
             <div key={k} className="flex items-center gap-1.5">
-              <span className="w-4 h-0.5 bg-muted-foreground inline-block" />
-              {v}
+              <svg width="16" height="10" className="shrink-0">
+                <line
+                  x1="0" y1="5" x2="12" y2="5"
+                  stroke={color} strokeWidth="2"
+                  strokeDasharray={dash}
+                />
+                <polygon points="12,2 16,5 12,8" fill={color} />
+              </svg>
+              {label}
             </div>
           ))}
         </div>
@@ -149,6 +172,7 @@ function MapContent() {
             edges={edges}
             highlightId={highlightId}
             onNodeClick={handleNodeClick}
+            lang={lang}
           />
         )}
       </div>
@@ -178,17 +202,20 @@ function MapContent() {
             <Separator />
 
             <div>
-              <p className="text-xs font-medium mb-2">出典 ({selected.appearances.length}冊)</p>
+              <p className="text-xs font-medium mb-2">📚 参照元の本 ({selected.appearances.length}冊)</p>
               <div className="space-y-2">
                 {selected.appearances.map((a) => (
-                  <div key={a.bookId} className="text-xs">
-                    <Link href={`/books/${a.bookId}`} className="font-medium hover:underline flex items-center gap-1">
-                      {a.bookTitle}
-                      <ExternalLink className="w-3 h-3" />
+                  <div key={a.bookId} className="rounded-md border p-2 text-xs space-y-1 hover:bg-muted/50 transition-colors">
+                    <Link href={`/books/${a.bookId}`} className="font-medium hover:underline flex items-start justify-between gap-1">
+                      <span>{a.bookTitle}</span>
+                      <ExternalLink className="w-3 h-3 shrink-0 mt-0.5" />
                     </Link>
                     <p className="text-muted-foreground">{a.bookAuthor}</p>
+                    <p className="text-yellow-500 tracking-tighter">
+                      {"★".repeat(a.importance)}{"☆".repeat(5 - a.importance)}
+                    </p>
                     {a.excerpt && (
-                      <p className="mt-1 italic border-l-2 pl-2 text-muted-foreground">{a.excerpt}</p>
+                      <p className="italic border-l-2 pl-2 text-muted-foreground">{a.excerpt}</p>
                     )}
                   </div>
                 ))}
@@ -212,7 +239,7 @@ function MapContent() {
                           className="w-full text-left text-xs hover:bg-muted rounded px-2 py-1 flex items-center gap-2"
                         >
                           <Badge variant="outline" className="text-xs shrink-0">
-                            {RELATION_LABELS[r.relationType] ?? r.relationType}
+                            {RELATION_LABELS[r.relationType]?.label ?? r.relationType}
                           </Badge>
                           <span className="truncate">{otherNode?.name ?? `#${otherId}`}</span>
                         </button>

@@ -49,7 +49,7 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
             name: ec.name,
             description: ec.description,
             domain: ec.domain,
-            aliases: "[]",
+            aliases: JSON.stringify(ec.nameJa ? [ec.nameJa] : []),
           })
           .returning();
         conceptId = inserted.id;

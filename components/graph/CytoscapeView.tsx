@@ -23,6 +23,7 @@ const EDGE_STYLES: Record<string, { lineStyle: string; lineColor: string }> = {
 interface Node {
   id: number;
   name: string;
+  aliases: string;
   domain: string;
   bookCount: number;
 }
@@ -40,22 +41,30 @@ interface Props {
   edges: Edge[];
   highlightId?: number | null;
   onNodeClick?: (nodeId: number) => void;
+  lang?: "en" | "ja";
 }
 
-export default function CytoscapeView({ nodes, edges, highlightId, onNodeClick }: Props) {
+export default function CytoscapeView({ nodes, edges, highlightId, onNodeClick, lang = "ja" }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
+  const onNodeClickRef = useRef(onNodeClick);
+  useEffect(() => { onNodeClickRef.current = onNodeClick; }, [onNodeClick]);
 
   const buildElements = useCallback(() => {
     return [
-      ...nodes.map((n) => ({
-        data: {
-          id: String(n.id),
-          label: n.name,
-          domain: n.domain,
-          bookCount: n.bookCount ?? 1,
-        },
-      })),
+      ...nodes.map((n) => {
+        const aliases: string[] = JSON.parse(n.aliases || "[]");
+        const jaName = aliases[0];
+        const label = lang === "ja" && jaName ? jaName : n.name;
+        return {
+          data: {
+            id: String(n.id),
+            label,
+            domain: n.domain,
+            bookCount: n.bookCount ?? 1,
+          },
+        };
+      }),
       ...edges.map((e) => ({
         data: {
           id: `e${e.id}`,
@@ -66,7 +75,7 @@ export default function CytoscapeView({ nodes, edges, highlightId, onNodeClick }
         },
       })),
     ];
-  }, [nodes, edges]);
+  }, [nodes, edges, lang]);
 
   useEffect(() => {
     if (!containerRef.current || nodes.length === 0) return;
@@ -142,17 +151,19 @@ export default function CytoscapeView({ nodes, edges, highlightId, onNodeClick }
           name: "fcose",
           quality: "proof",
           animate: true,
-          animationDuration: 800,
-          randomize: false,
-          nodeSeparation: 75,
-          idealEdgeLength: 100,
+          animationDuration: 1000,
+          randomize: true,
+          nodeSeparation: 120,
+          idealEdgeLength: 150,
+          nodeRepulsion: 8000,
+          numIter: 2500,
         } as cytoscape.LayoutOptions,
         wheelSensitivity: 0.3,
       });
 
       cy.on("tap", "node", (e) => {
         const nodeId = Number(e.target.id());
-        onNodeClick?.(nodeId);
+        onNodeClickRef.current?.(nodeId);
       });
 
       cyRef.current = cy;
@@ -164,7 +175,7 @@ export default function CytoscapeView({ nodes, edges, highlightId, onNodeClick }
       cyRef.current?.destroy();
       cyRef.current = null;
     };
-  }, [nodes, edges]);
+  }, [nodes, edges, lang]);
 
   // Highlight node without re-building the graph
   useEffect(() => {

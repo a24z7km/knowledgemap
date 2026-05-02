@@ -4,6 +4,7 @@ const client = new OpenAI();
 
 export interface ExtractedConcept {
   name: string;
+  nameJa: string;
   description: string;
   importance: 1 | 2 | 3 | 4 | 5;
   excerpt: string;
@@ -25,7 +26,11 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
             properties: {
               name: {
                 type: "string",
-                description: "Short normalized concept name in English or Japanese (no domain prefix)",
+                description: "Short normalized concept name in English (no domain prefix, 1-4 words)",
+              },
+              nameJa: {
+                type: "string",
+                description: "Japanese translation of the concept name (2-8 characters, natural Japanese)",
               },
               description: {
                 type: "string",
@@ -47,7 +52,7 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
                 description: "Primary knowledge domain",
               },
             },
-            required: ["name", "description", "importance", "excerpt", "domain"],
+            required: ["name", "nameJa", "description", "importance", "excerpt", "domain"],
           },
           minItems: 5,
           maxItems: 50,
@@ -74,10 +79,8 @@ export async function extractConcepts(
         content: `You are a knowledge extraction specialist. Extract key concepts from books across cybersecurity, finance, law, and computer science.
 
 Naming rules:
-- Use the most common English or Japanese term
-- Keep names short (1-4 words)
-- No domain prefixes (not "Security: TLS" just "TLS")
-- Use standard normalized forms (e.g. "TLS handshake" not "TLS Handshaking Protocol")`,
+- name: always in English, short (1-4 words), no domain prefixes (not "Security: TLS" just "TLS")
+- nameJa: natural Japanese translation of the concept name`,
       },
       {
         role: "user",
