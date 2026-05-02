@@ -80,6 +80,8 @@ Create enough edges for a readable knowledge map:
 - Every important concept should connect to 2-4 other concepts when reasonable.
 - Use prerequisite, extends, and applies_to for directional relationships.
 - Use related for peer concepts that belong to the same argument, framework, practice, or problem.
+- Connect frameworks to their component principles, habits, practices, and underlying mental models.
+- Connect practical methods to the concepts they apply or operationalize.
 - Avoid self-loops and duplicate from/to pairs.
 - Do not invent concepts outside the provided list.`,
       },
@@ -89,7 +91,7 @@ Create enough edges for a readable knowledge map:
 
 ${conceptList}
 
-Return ${minRelations}-${maxRelations} relationships. Prefer a connected graph over isolated concept clusters. If a concept is central to the book, connect it to multiple relevant concepts.`,
+Return ${minRelations}-${maxRelations} relationships. Prefer a connected graph over isolated concept clusters. If a concept is a framework, principle, habit, or mental model central to the book, connect it to multiple relevant concepts.`,
       },
     ],
   });

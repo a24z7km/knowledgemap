@@ -26,15 +26,17 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
             properties: {
               name: {
                 type: "string",
-                description: "Short normalized concept name in English (no domain prefix, 1-4 words)",
+                description:
+                  "Short normalized concept, framework, principle, mental model, or practice name in English (no domain prefix, 1-6 words)",
               },
               nameJa: {
                 type: "string",
-                description: "Japanese translation of the concept name (2-8 characters, natural Japanese)",
+                description: "Japanese translation of the concept name (natural Japanese, concise but not abbreviated)",
               },
               description: {
                 type: "string",
-                description: "1-3 sentence description of the concept",
+                description:
+                  "1-3 sentence description that explains how the idea, framework, principle, or practice is used in the book",
               },
               importance: {
                 type: "integer",
@@ -54,7 +56,7 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
             },
             required: ["name", "nameJa", "description", "importance", "excerpt", "domain"],
           },
-          minItems: 5,
+          minItems: 10,
           maxItems: 50,
         },
       },
@@ -77,23 +79,39 @@ export async function extractConcepts(
     messages: [
       {
         role: "system",
-        content: `You are a knowledge extraction specialist. Extract key concepts from books across cybersecurity, finance, law, and computer science.
+        content: `You are a knowledge extraction specialist. Extract reusable knowledge units from books across business, psychology, philosophy, cybersecurity, finance, law, math, and computer science.
+
+Treat the following as valid concepts:
+- named frameworks and models
+- principles, laws, habits, maxims, and rules of thumb
+- ways of thinking, mental models, and decision lenses
+- practices, methods, workflows, and exercises
+- key distinctions, tradeoffs, and recurring patterns
+- technical/domain concepts
 
 Naming rules:
-- name: always in English, short (1-4 words), no domain prefixes (not "Security: TLS" just "TLS")
-- nameJa: natural Japanese translation of the concept name`,
+- name: always in English, short (1-6 words), no domain prefixes (not "Security: TLS" just "TLS")
+- nameJa: natural Japanese translation of the concept name
+- Preserve famous named ideas when the book is known for them, such as "Be Proactive", "Circle of Influence", or "Think Win-Win".`,
       },
       {
         role: "user",
-        content: `Extract 10-50 key concepts from this book:
+        content: `Extract 15-50 reusable knowledge units from this book:
 
 Title: ${title}
 Author: ${author}
 
 Notes/Summary:
-${notes || "(No notes provided — infer concepts from title and author)"}
+${notes || "(No notes provided — infer well-known concepts, frameworks, and thinking patterns from the title and author)"}
 
-Extract the most important concepts, frameworks, and ideas from this book. Focus on reusable knowledge that connects to other domains.`,
+Include not only topic nouns, but also the frameworks, principles, ways of thinking, practical methods, and key distinctions explained by the book.
+
+Balance the output:
+- 30-50% named frameworks, principles, habits, or mental models
+- 30-50% supporting concepts needed to understand them
+- 10-30% practices, applications, or tradeoffs
+
+Prefer book-specific ideas over generic labels. For example, extract "Circle of Influence" rather than only "Self Improvement".`,
       },
     ],
   });
