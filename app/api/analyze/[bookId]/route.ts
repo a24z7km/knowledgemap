@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { books, concepts, bookConcepts, conceptRelations } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and } from "drizzle-orm"; // and: used in bookConcepts upsert check
 import { extractConcepts } from "@/lib/llm/extract-concepts";
 import { extractRelations } from "@/lib/llm/extract-relations";
 
@@ -95,35 +95,23 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
       }
     }
 
-    // Step 3: Extract relations
+    // Step 3: Extract relations (delete old ones for this book first to reflect re-analysis)
+    await db.delete(conceptRelations).where(eq(conceptRelations.bookId, bookId));
+
     const relations = await extractRelations(title, extracted);
     for (const rel of relations) {
       const fromId = conceptIds[rel.from];
       const toId = conceptIds[rel.to];
       if (!fromId || !toId) continue;
 
-      // Avoid duplicates
-      const existing = await db
-        .select()
-        .from(conceptRelations)
-        .where(
-          and(
-            eq(conceptRelations.fromConceptId, fromId),
-            eq(conceptRelations.toConceptId, toId),
-            eq(conceptRelations.bookId, bookId)
-          )
-        )
-        .limit(1);
-      if (existing.length === 0) {
-        await db.insert(conceptRelations).values({
-          fromConceptId: fromId,
-          toConceptId: toId,
-          relationType: rel.type,
-          evidence: rel.evidence,
-          bookId,
-          source: "llm",
-        });
-      }
+      await db.insert(conceptRelations).values({
+        fromConceptId: fromId,
+        toConceptId: toId,
+        relationType: rel.type,
+        evidence: rel.evidence,
+        bookId,
+        source: "llm",
+      });
     }
 
     await db.update(books).set({ analyzeStatus: "done" }).where(eq(books.id, bookId));
