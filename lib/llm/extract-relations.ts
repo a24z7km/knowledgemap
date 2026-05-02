@@ -60,7 +60,7 @@ export async function extractRelations(
 
   const response = await client.chat.completions.create({
     model,
-    max_tokens: 8192,
+    max_completion_tokens: 8192,
     tools: [buildRelationTool(minRelations, maxRelations)],
     tool_choice: { type: "function", function: { name: "save_relations" } },
     messages: [

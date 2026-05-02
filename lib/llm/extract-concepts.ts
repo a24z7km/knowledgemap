@@ -161,7 +161,7 @@ export async function extractConcepts(
 ): Promise<ExtractedConcept[]> {
   const response = await client.chat.completions.create({
     model,
-    max_tokens: 4096,
+    max_completion_tokens: 4096,
     tools: [CONCEPT_TOOL],
     tool_choice: { type: "function", function: { name: "save_concepts" } },
     messages: [

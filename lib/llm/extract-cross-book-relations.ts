@@ -91,7 +91,7 @@ export async function extractCrossBookRelations({
   const maxRelations = Math.min(newConcepts.length * 3, 60);
   const response = await client.chat.completions.create({
     model,
-    max_tokens: 8192,
+    max_completion_tokens: 8192,
     tools: [buildCrossBookRelationTool(maxRelations)],
     tool_choice: { type: "function", function: { name: "save_cross_book_relations" } },
     messages: [
