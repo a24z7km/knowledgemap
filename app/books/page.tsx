@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Download, Plus, Trash2, Play, Link as LinkIcon, Upload } from "lucide-react";
+import { Download, Plus, Trash2, Play, Link as LinkIcon, Upload, CheckSquare, Square } from "lucide-react";
 import type { Book } from "@/lib/db/schema";
 
 const STATUS_MAP = {
@@ -57,6 +57,45 @@ export default function BooksPage() {
 
   // Model selection
   const [model, setModel] = useState("gpt-4o-mini");
+
+  // Bulk selection
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [bulkAnalyzing, setBulkAnalyzing] = useState(false);
+
+  const toggleSelect = (id: number) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const selectAll = () => {
+    const analyzable = books.filter((b) => b.analyzeStatus !== "analyzing").map((b) => b.id);
+    if (selectedIds.size === analyzable.length && analyzable.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(analyzable));
+    }
+  };
+
+  const analyzeSelected = async () => {
+    const targets = books.filter((b) => selectedIds.has(b.id) && b.analyzeStatus !== "analyzing");
+    if (targets.length === 0) return;
+    setBulkAnalyzing(true);
+    setSelectedIds(new Set());
+    for (const book of targets) {
+      await fetch(`/api/analyze/${book.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+      toast.info(`「${book.title}」の解析を開始`);
+      load();
+      // brief pause between requests
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    setBulkAnalyzing(false);
+  };
 
   const load = () =>
     fetch("/api/books")
@@ -221,9 +260,9 @@ export default function BooksPage() {
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <h1 className="text-2xl font-bold">本一覧</h1>
-        <div className="flex items-center gap-2 ml-auto">
+        <div className="flex items-center gap-2 ml-auto flex-wrap">
           <Select value={model} onValueChange={(v) => setModel(v ?? "gpt-4o-mini")}>
             <SelectTrigger className="w-56 h-8 text-xs">
               <SelectValue />
@@ -239,6 +278,20 @@ export default function BooksPage() {
               <SelectItem value="o3">o3　〜50円/冊</SelectItem>
             </SelectContent>
           </Select>
+          {books.length > 0 && (
+            <Button variant="outline" size="sm" onClick={selectAll} className="gap-1.5">
+              {selectedIds.size === books.filter((b) => b.analyzeStatus !== "analyzing").length && books.length > 0
+                ? <CheckSquare className="w-4 h-4" />
+                : <Square className="w-4 h-4" />}
+              {selectedIds.size === 0 ? "全選択" : `${selectedIds.size}冊選択中`}
+            </Button>
+          )}
+          {selectedIds.size > 0 && (
+            <Button size="sm" onClick={analyzeSelected} disabled={bulkAnalyzing} className="gap-1.5">
+              <Play className="w-4 h-4" />
+              {bulkAnalyzing ? "解析中..." : `選択した${selectedIds.size}冊を解析`}
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={exportCsv} className="gap-1.5">
             <Download className="w-4 h-4" />
             CSV
@@ -348,14 +401,34 @@ export default function BooksPage() {
 
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
         {books.map((book) => (
-          <Card key={book.id} className="hover:shadow-md transition-shadow">
+          <Card
+            key={book.id}
+            className={`hover:shadow-md transition-shadow cursor-pointer ${selectedIds.has(book.id) ? "ring-2 ring-primary" : ""}`}
+            onClick={() => book.analyzeStatus !== "analyzing" && toggleSelect(book.id)}
+          >
             <CardContent className="pt-4 pb-4 space-y-2">
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <Link href={`/books/${book.id}`} className="font-medium text-sm hover:underline block truncate">
-                    {book.title}
-                  </Link>
-                  <p className="text-xs text-muted-foreground truncate">{book.author}</p>
+                <div className="flex items-start gap-2 min-w-0">
+                  {book.analyzeStatus !== "analyzing" && (
+                    <button
+                      className="mt-0.5 shrink-0 text-muted-foreground hover:text-primary"
+                      onClick={(e) => { e.stopPropagation(); toggleSelect(book.id); }}
+                    >
+                      {selectedIds.has(book.id)
+                        ? <CheckSquare className="w-4 h-4 text-primary" />
+                        : <Square className="w-4 h-4" />}
+                    </button>
+                  )}
+                  <div className="min-w-0">
+                    <Link
+                      href={`/books/${book.id}`}
+                      className="font-medium text-sm hover:underline block truncate"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {book.title}
+                    </Link>
+                    <p className="text-xs text-muted-foreground truncate">{book.author}</p>
+                  </div>
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <Badge variant={STATUS_MAP[book.readStatus].color} className="text-xs">
