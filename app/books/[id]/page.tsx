@@ -153,8 +153,8 @@ export default function BookDetailPage() {
                           {c.conceptName}
                         </Link>
                         <div className="mt-1 flex flex-wrap gap-1">
-                          {conceptMetadataLabels(c).map((label) => (
-                            <span key={label} className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                          {conceptMetadataLabels(c).map((label, i) => (
+                            <span key={i} className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
                               {label}
                             </span>
                           ))}
