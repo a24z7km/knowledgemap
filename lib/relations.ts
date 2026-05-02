@@ -15,6 +15,23 @@ export const RELATION_TYPES = [
 
 export type RelationType = (typeof RELATION_TYPES)[number];
 
+export const DIRECTIONAL_RELATION_TYPES = [
+  "prerequisite",
+  "extends",
+  "applies_to",
+  "operationalizes",
+  "example_of",
+  "supports",
+  "reframes",
+  "mitigates",
+] as const satisfies readonly RelationType[];
+
+export const UNDIRECTED_RELATION_TYPES = [
+  "related",
+  "same_family_as",
+  "contrasts_with",
+] as const satisfies readonly RelationType[];
+
 export const RELATION_LABELS: Record<RelationType, { label: string; color: string; dash?: string }> = {
   prerequisite: { label: "前提", color: "#f97316" },
   related: { label: "関連", color: "#94a3b8" },
@@ -32,6 +49,52 @@ export const RELATION_LABELS: Record<RelationType, { label: string; color: strin
 
 export function isRelationType(value: string): value is RelationType {
   return (RELATION_TYPES as readonly string[]).includes(value);
+}
+
+export function isUndirectedRelationType(value: string): value is (typeof UNDIRECTED_RELATION_TYPES)[number] {
+  return (UNDIRECTED_RELATION_TYPES as readonly string[]).includes(value);
+}
+
+export function normalizeConceptRelation({
+  fromConceptId,
+  toConceptId,
+  relationType,
+  bookId,
+}: {
+  fromConceptId: number;
+  toConceptId: number;
+  relationType: string;
+  bookId: number | null;
+}) {
+  const normalizedType = isRelationType(relationType) ? relationType : "related";
+  const shouldSortIds = isUndirectedRelationType(normalizedType) && fromConceptId > toConceptId;
+
+  return {
+    fromConceptId: shouldSortIds ? toConceptId : fromConceptId,
+    toConceptId: shouldSortIds ? fromConceptId : toConceptId,
+    relationType: normalizedType,
+    bookId,
+  };
+}
+
+export function relationIdentityKey({
+  fromConceptId,
+  toConceptId,
+  relationType,
+  bookId,
+}: {
+  fromConceptId: number;
+  toConceptId: number;
+  relationType: string;
+  bookId: number | null;
+}) {
+  const normalized = normalizeConceptRelation({ fromConceptId, toConceptId, relationType, bookId });
+  return [
+    normalized.fromConceptId,
+    normalized.toConceptId,
+    normalized.relationType,
+    normalized.bookId ?? "cross_book",
+  ].join("||");
 }
 
 export function relationLabel(value: string): string {

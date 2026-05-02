@@ -66,6 +66,8 @@ function getDb() {
 
   ensureRelationTypeConstraint(sqlite);
   ensureAnalyzeStatusConstraint(sqlite);
+  normalizeExistingConceptRelations(sqlite);
+  ensureConceptRelationUniqueIndexes(sqlite);
 
   return _db;
 }
@@ -191,6 +193,55 @@ function ensureRelationTypeConstraint(sqlite: Database.Database) {
   } finally {
     sqlite.exec("PRAGMA foreign_keys = ON");
   }
+}
+
+function normalizeExistingConceptRelations(sqlite: Database.Database) {
+  const rows = sqlite
+    .prepare("SELECT id, from_concept_id, to_concept_id, relation_type, book_id FROM concept_relations ORDER BY id")
+    .all() as {
+      id: number;
+      from_concept_id: number;
+      to_concept_id: number;
+      relation_type: string;
+      book_id: number | null;
+    }[];
+  const seen = new Set<string>();
+
+  const normalizeRelation = sqlite.transaction(() => {
+    for (const row of rows) {
+      const isUndirected = ["related", "same_family_as", "contrasts_with"].includes(row.relation_type);
+      const fromConceptId = isUndirected ? Math.min(row.from_concept_id, row.to_concept_id) : row.from_concept_id;
+      const toConceptId = isUndirected ? Math.max(row.from_concept_id, row.to_concept_id) : row.to_concept_id;
+      const scope = row.book_id == null ? "cross_book" : String(row.book_id);
+      const key = `${fromConceptId}||${toConceptId}||${row.relation_type}||${scope}`;
+
+      if (seen.has(key)) {
+        sqlite.prepare("DELETE FROM concept_relations WHERE id = ?").run(row.id);
+        continue;
+      }
+
+      seen.add(key);
+      if (fromConceptId !== row.from_concept_id || toConceptId !== row.to_concept_id) {
+        sqlite
+          .prepare("UPDATE concept_relations SET from_concept_id = ?, to_concept_id = ? WHERE id = ?")
+          .run(fromConceptId, toConceptId, row.id);
+      }
+    }
+  });
+
+  normalizeRelation();
+}
+
+function ensureConceptRelationUniqueIndexes(sqlite: Database.Database) {
+  sqlite.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_concept_relations_unique_book
+    ON concept_relations (from_concept_id, to_concept_id, relation_type, book_id)
+    WHERE book_id IS NOT NULL;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_concept_relations_unique_cross_book
+    ON concept_relations (from_concept_id, to_concept_id, relation_type)
+    WHERE book_id IS NULL;
+  `);
 }
 
 export { getDb };

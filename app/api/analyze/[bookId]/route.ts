@@ -10,6 +10,7 @@ import {
   type CrossBookRelationContext,
 } from "@/lib/llm/extract-cross-book-relations";
 import { conceptLookupKeys, mergeAliases, parseAliases } from "@/lib/concepts/normalize";
+import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
 
 export async function POST(req: Request, { params }: { params: Promise<{ bookId: string }> }) {
   const { bookId } = await params;
@@ -145,15 +146,26 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     await db.delete(conceptRelations).where(eq(conceptRelations.bookId, bookId));
 
     const relations = await extractRelations(title, extracted, model);
+    const bookRelationKeys = new Set<string>();
     for (const rel of relations) {
       const fromId = conceptIds[rel.from];
       const toId = conceptIds[rel.to];
       if (!fromId || !toId) continue;
 
-      await db.insert(conceptRelations).values({
+      const normalized = normalizeConceptRelation({
         fromConceptId: fromId,
         toConceptId: toId,
         relationType: rel.type,
+        bookId,
+      });
+      const key = relationIdentityKey(normalized);
+      if (bookRelationKeys.has(key)) continue;
+      bookRelationKeys.add(key);
+
+      await db.insert(conceptRelations).values({
+        fromConceptId: normalized.fromConceptId,
+        toConceptId: normalized.toConceptId,
+        relationType: normalized.relationType,
         evidence: rel.evidence,
         bookId,
         source: "llm",
@@ -298,13 +310,14 @@ async function saveCrossBookRelations(
   const existingConceptIds = new Set(context.existingConcepts.map((concept) => concept.id));
   const savedRelations = await db.select().from(conceptRelations);
   const savedRelationKeys = new Set(
-    savedRelations.map((relation) => `${relation.fromConceptId}||${relation.toConceptId}||${relation.relationType}`)
-  );
-  const savedPairKeys = new Set(
-    savedRelations.flatMap((relation) => [
-      `${relation.fromConceptId}||${relation.toConceptId}`,
-      `${relation.toConceptId}||${relation.fromConceptId}`,
-    ])
+    savedRelations.map((relation) =>
+      relationIdentityKey({
+        fromConceptId: relation.fromConceptId,
+        toConceptId: relation.toConceptId,
+        relationType: relation.relationType,
+        bookId: relation.bookId,
+      })
+    )
   );
 
   for (const relation of relations) {
@@ -319,21 +332,24 @@ async function saveCrossBookRelations(
       (existingConceptIds.has(fromId) && newConceptIds.has(toId));
     if (!crossesBookBoundary) continue;
 
-    const key = `${fromId}||${toId}||${relation.relationType}`;
-    const pairKey = `${fromId}||${toId}`;
-    if (savedRelationKeys.has(key) || savedPairKeys.has(pairKey)) continue;
-
-    await db.insert(conceptRelations).values({
+    const normalized = normalizeConceptRelation({
       fromConceptId: fromId,
       toConceptId: toId,
       relationType: relation.relationType,
+      bookId: null,
+    });
+    const key = relationIdentityKey(normalized);
+    if (savedRelationKeys.has(key)) continue;
+
+    await db.insert(conceptRelations).values({
+      fromConceptId: normalized.fromConceptId,
+      toConceptId: normalized.toConceptId,
+      relationType: normalized.relationType,
       weight: relation.weight,
       source: "llm",
       bookId: null,
       evidence: `${relation.evidence}\n\nReason: ${relation.reason}\nConfidence: ${relation.confidence.toFixed(2)}`,
     });
     savedRelationKeys.add(key);
-    savedPairKeys.add(pairKey);
-    savedPairKeys.add(`${toId}||${fromId}`);
   }
 }
