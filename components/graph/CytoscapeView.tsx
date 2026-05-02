@@ -209,7 +209,11 @@ export default function CytoscapeView({
       });
 
       cy.userPanningEnabled(!selectionModeRef.current);
-      cy.nodes().ungrabify();
+      if (selectionModeRef.current) {
+        cy.nodes().ungrabify();
+      } else {
+        cy.nodes().grabify();
+      }
 
       const selectNode = (e: cytoscape.EventObject) => {
         const nodeId = Number(e.target.id());
@@ -253,7 +257,11 @@ export default function CytoscapeView({
 
     cy.boxSelectionEnabled(selectionMode);
     cy.userPanningEnabled(!selectionMode);
-    cy.nodes().ungrabify();
+    if (selectionMode) {
+      cy.nodes().ungrabify();
+    } else {
+      cy.nodes().grabify();
+    }
 
     if (!selectionMode) {
       cy.nodes().unselect();
