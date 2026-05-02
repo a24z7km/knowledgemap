@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { books, concepts, bookConcepts, conceptRelations } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm"; // and: used in bookConcepts upsert check
+import { eq, and } from "drizzle-orm";
 import { extractConcepts } from "@/lib/llm/extract-concepts";
 import { extractRelations } from "@/lib/llm/extract-relations";
 
@@ -46,11 +46,28 @@ async function fetchGoogleBooksDescription(title: string, author: string): Promi
 async function runAnalysis(bookId: number, title: string, author: string, notes: string) {
   const db = getDb();
   try {
-    // Step 1: Enrich notes with Google Books description
+    // Step 1: Clean up previous analysis data for this book
+    const prevLinks = await db.select({ conceptId: bookConcepts.conceptId }).from(bookConcepts).where(eq(bookConcepts.bookId, bookId));
+    const prevConceptIds = prevLinks.map((l) => l.conceptId);
+
+    await db.delete(conceptRelations).where(eq(conceptRelations.bookId, bookId));
+    await db.delete(bookConcepts).where(eq(bookConcepts.bookId, bookId));
+
+    // Delete concepts no longer referenced by any book
+    for (const conceptId of prevConceptIds) {
+      const remaining = await db.select().from(bookConcepts).where(eq(bookConcepts.conceptId, conceptId)).limit(1);
+      if (remaining.length === 0) {
+        await db.delete(conceptRelations).where(eq(conceptRelations.fromConceptId, conceptId));
+        await db.delete(conceptRelations).where(eq(conceptRelations.toConceptId, conceptId));
+        await db.delete(concepts).where(eq(concepts.id, conceptId));
+      }
+    }
+
+    // Step 2: Enrich notes with Google Books description
     const googleDesc = await fetchGoogleBooksDescription(title, author);
     const enrichedNotes = [notes, googleDesc].filter(Boolean).join("\n\n");
 
-    // Step 2: Extract concepts
+    // Step 3: Extract concepts
     const extracted = await extractConcepts(title, author, enrichedNotes);
 
     // Step 2: Normalize + upsert concepts
