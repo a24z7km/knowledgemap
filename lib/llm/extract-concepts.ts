@@ -106,7 +106,7 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
               conceptType: {
                 type: "string",
                 enum: CONCEPT_TYPES,
-                description: "The kind of concept: theory, model, framework, principle, technical_term, mechanism, method, practice, distinction, metric, institution, person, event, phenomenon, outcome, or theme",
+                description: "The kind of concept: theory, model, framework, principle, technical_term, mechanism, method, practice, distinction, metric, institution, person, event, phenomenon, outcome, or theme. Use framework for the container (e.g. '7 Habits', 'PDCA') and principle or practice for each numbered/named component inside it (e.g. 'Be Proactive', 'Begin with the End in Mind'). This distinction is critical for building correct relationships.",
               },
               specificity: {
                 type: "string",

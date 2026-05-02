@@ -88,7 +88,8 @@ Create enough edges for a readable knowledge map:
 - Use prerequisite, extends, applies_to, operationalizes, example_of, reframes, and mitigates for directional relationships.
 - Use same_family_as for peer concepts that belong to the same argument, framework, practice, or problem.
 - Use contrasts_with for distinctions and tradeoffs that are not strict contradictions.
-- Connect frameworks to their component principles, habits, practices, and underlying mental models.
+- When a concept is a numbered or named framework, list, or system (e.g. "7 Habits", "PDCA", "5 Whys", "OKR"), explicitly link EVERY component principle, habit, step, or layer that appears in the concept list to the framework using example_of (component → framework). Do not skip any components.
+- When sibling components belong to the same framework or argument (e.g. Habit 1 and Habit 2), link them with same_family_as.
 - Connect practical methods to the concepts they apply or operationalize.
 - Avoid self-loops and duplicate from/to pairs.
 - Do not invent concepts outside the provided list.`,

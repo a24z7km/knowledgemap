@@ -11,7 +11,7 @@ import {
 } from "@/lib/llm/extract-cross-book-relations";
 import { conceptLookupKeys, mergeAliases, parseAliases } from "@/lib/concepts/normalize";
 import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
-import { fetchBookMetadata, type BookMetadata } from "@/lib/metadata/fetch-book-metadata";
+import { fetchBookMetadata } from "@/lib/metadata/fetch-book-metadata";
 
 export async function POST(req: Request, { params }: { params: Promise<{ bookId: string }> }) {
   const { bookId } = await params;
