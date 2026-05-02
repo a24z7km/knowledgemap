@@ -41,19 +41,34 @@ interface Props {
   edges: Edge[];
   highlightId?: number | null;
   onNodeClick?: (nodeId: number) => void;
+  onSelectionChange?: (nodeIds: number[]) => void;
   lang?: "en" | "ja";
 }
 
-export default function CytoscapeView({ nodes, edges, highlightId, onNodeClick, lang = "ja" }: Props) {
+export default function CytoscapeView({
+  nodes,
+  edges,
+  highlightId,
+  onNodeClick,
+  onSelectionChange,
+  lang = "ja",
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const onNodeClickRef = useRef(onNodeClick);
+  const onSelectionChangeRef = useRef(onSelectionChange);
   useEffect(() => { onNodeClickRef.current = onNodeClick; }, [onNodeClick]);
+  useEffect(() => { onSelectionChangeRef.current = onSelectionChange; }, [onSelectionChange]);
 
   const buildElements = useCallback(() => {
     return [
       ...nodes.map((n) => {
-        const aliases: string[] = JSON.parse(n.aliases || "[]");
+        let aliases: string[] = [];
+        try {
+          aliases = JSON.parse(n.aliases || "[]");
+        } catch {
+          aliases = [];
+        }
         const jaName = aliases[0];
         const label = lang === "ja" && jaName ? jaName : n.name;
         return {
@@ -159,11 +174,26 @@ export default function CytoscapeView({ nodes, edges, highlightId, onNodeClick, 
           numIter: 2500,
         } as cytoscape.LayoutOptions,
         wheelSensitivity: 0.3,
+        boxSelectionEnabled: true,
+        selectionType: "additive",
       });
 
-      cy.on("tap", "node", (e) => {
+      const selectNode = (e: cytoscape.EventObject) => {
         const nodeId = Number(e.target.id());
         onNodeClickRef.current?.(nodeId);
+      };
+
+      const syncSelection = () => {
+        const selectedIds = cy.nodes(":selected").map((node) => Number(node.id()));
+        onSelectionChangeRef.current?.(selectedIds);
+      };
+
+      cy.on("tap", "node", selectNode);
+      cy.on("select unselect", "node", syncSelection);
+      cy.on("tap", (e) => {
+        if (e.target !== cy) return;
+        cy.nodes().unselect();
+        onSelectionChangeRef.current?.([]);
       });
 
       cyRef.current = cy;

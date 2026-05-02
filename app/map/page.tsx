@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, Suspense, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { ExternalLink } from "lucide-react";
+import { BookOpen, ExternalLink, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 import type { Book } from "@/lib/db/schema";
@@ -59,6 +60,20 @@ interface ConceptDetail {
   relations: GraphEdge[];
 }
 
+interface BookSuggestion {
+  title: string;
+  author: string;
+  reason: string;
+  angle: string;
+}
+
+interface MapInsight {
+  summary: string;
+  keyIdeas: string[];
+  developmentQuestions: string[];
+  bookSuggestions: BookSuggestion[];
+}
+
 function MapContent() {
   const searchParams = useSearchParams();
   const highlightParam = searchParams.get("highlight");
@@ -69,10 +84,17 @@ function MapContent() {
   const [domain, setDomain] = useState("all");
   const [bookFilter, setBookFilter] = useState("all");
   const [selected, setSelected] = useState<ConceptDetail | null>(null);
+  const [selectedLoading, setSelectedLoading] = useState(false);
+  const [selectedError, setSelectedError] = useState<string | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<number[]>([]);
+  const [insight, setInsight] = useState<MapInsight | null>(null);
+  const [insightLoading, setInsightLoading] = useState(false);
+  const [insightError, setInsightError] = useState<string | null>(null);
   const [lang, setLang] = useState<"en" | "ja">("ja");
   const [highlightId, setHighlightId] = useState<number | null>(
     highlightParam ? Number(highlightParam) : null
   );
+  const pendingNodeIdRef = useRef<number | null>(null);
 
   const loadGraph = useCallback(() => {
     const params = new URLSearchParams();
@@ -112,16 +134,76 @@ function MapContent() {
     return () => clearInterval(iv);
   }, [books, loadGraph]);
 
-  const handleNodeClick = (nodeId: number) => {
+  const handleNodeClick = useCallback((nodeId: number) => {
+    if (pendingNodeIdRef.current === nodeId) return;
+    pendingNodeIdRef.current = nodeId;
     setHighlightId(nodeId);
+    setInsightError(null);
+    setSelectedLoading(true);
+    setSelectedError(null);
     fetch(`/api/concepts/${nodeId}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.concept) setSelected(data);
-        else toast.error("概念の情報を取得できませんでした");
+      .then((r) => {
+        if (!r.ok) throw new Error("概念の情報を取得できませんでした");
+        return r.json();
       })
-      .catch(() => toast.error("通信エラーが発生しました"));
-  };
+      .then((data) => {
+        if (data?.concept) {
+          setSelected(data);
+        } else {
+          throw new Error("概念の情報を取得できませんでした");
+        }
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "通信エラーが発生しました";
+        setSelected(null);
+        setSelectedError(message);
+        toast.error(message);
+      })
+      .finally(() => {
+        if (pendingNodeIdRef.current === nodeId) pendingNodeIdRef.current = null;
+        setSelectedLoading(false);
+      });
+  }, []);
+
+  const handleSelectionChange = useCallback((nodeIds: number[]) => {
+    setSelectedNodeIds(nodeIds);
+    setInsight(null);
+    setInsightError(null);
+  }, []);
+
+  const summarizeSelection = useCallback(() => {
+    const conceptIds = selectedNodeIds.length > 0 ? selectedNodeIds : highlightId != null ? [highlightId] : [];
+    if (conceptIds.length === 0) {
+      toast.error("要約する概念を選択してください");
+      return;
+    }
+
+    setInsightLoading(true);
+    setInsightError(null);
+    fetch("/api/map/insights", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conceptIds }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error("概要を生成できませんでした");
+        return r.json();
+      })
+      .then((data: MapInsight) => setInsight(data))
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "概要の生成中にエラーが発生しました";
+        setInsightError(message);
+        toast.error(message);
+      })
+      .finally(() => setInsightLoading(false));
+  }, [highlightId, selectedNodeIds]);
+
+  useEffect(() => {
+    if (highlightId != null && selected?.concept.id !== highlightId && !selectedLoading) {
+      const timer = window.setTimeout(() => handleNodeClick(highlightId), 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [highlightId, selected?.concept.id, selectedLoading, handleNodeClick]);
 
   return (
     <div className="flex h-full">
@@ -196,14 +278,114 @@ function MapContent() {
             edges={edges}
             highlightId={highlightId}
             onNodeClick={handleNodeClick}
+            onSelectionChange={handleSelectionChange}
             lang={lang}
           />
         )}
       </div>
 
       {/* Detail panel */}
-      {selected && (
-        <div className="w-80 border-l overflow-y-auto shrink-0 bg-background">
+      <div className="w-80 border-l overflow-y-auto shrink-0 bg-background">
+        <div className="border-b p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium">選択範囲</p>
+              <p className="text-xs text-muted-foreground">
+                {selectedNodeIds.length > 0
+                  ? `${selectedNodeIds.length}件の概念を選択中`
+                  : highlightId != null
+                    ? "1件の概念を選択中"
+                    : "未選択"}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              onClick={summarizeSelection}
+              disabled={insightLoading || (selectedNodeIds.length === 0 && highlightId == null)}
+              className="h-8 gap-1.5"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              要約
+            </Button>
+          </div>
+
+          {insightLoading && (
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          )}
+
+          {insightError && (
+            <p className="text-xs text-destructive">{insightError}</p>
+          )}
+
+          {insight && (
+            <div className="space-y-3 text-sm">
+              <div>
+                <p className="text-xs font-medium mb-1">概要</p>
+                <p className="text-muted-foreground leading-relaxed">{insight.summary}</p>
+              </div>
+
+              {insight.keyIdeas.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium mb-1">核になる考え</p>
+                  <ul className="space-y-1 text-xs text-muted-foreground">
+                    {insight.keyIdeas.map((idea) => (
+                      <li key={idea}>・{idea}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {insight.developmentQuestions.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium mb-1">発展させる問い</p>
+                  <ul className="space-y-1 text-xs text-muted-foreground">
+                    {insight.developmentQuestions.map((question) => (
+                      <li key={question}>・{question}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {insight.bookSuggestions.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium mb-2 flex items-center gap-1">
+                    <BookOpen className="h-3.5 w-3.5" />
+                    次に読む本
+                  </p>
+                  <div className="space-y-2">
+                    {insight.bookSuggestions.map((book) => (
+                      <div key={`${book.title}-${book.author}`} className="rounded-md border p-2 text-xs space-y-1">
+                        <p className="font-medium">{book.title}</p>
+                        <p className="text-muted-foreground">{book.author}</p>
+                        <p>{book.angle}</p>
+                        <p className="text-muted-foreground">{book.reason}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {selectedLoading ? (
+          <div className="p-4 space-y-3">
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-20" />
+            <Skeleton className="h-16 w-full" />
+            <Separator />
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+        ) : selectedError ? (
+          <div className="p-4 text-sm text-muted-foreground">
+            {selectedError}
+          </div>
+        ) : selected ? (
           <div className="p-4 space-y-4">
             <div>
               <div className="flex items-center justify-between">
@@ -274,8 +456,12 @@ function MapContent() {
               </>
             )}
           </div>
-        </div>
-      )}
+        ) : (
+          <div className="flex h-full items-center justify-center p-4 text-center text-sm text-muted-foreground">
+            ドットを選択すると、定義・参照元の本・関係がここに表示されます。
+          </div>
+        )}
+      </div>
     </div>
   );
 }
