@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense, useRef } from "react";
+import { useEffect, useState, useCallback, Suspense, useRef, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Badge } from "@/components/ui/badge";
@@ -60,6 +60,17 @@ interface MapInsight {
   bookSuggestions: BookSuggestion[];
 }
 
+type ViewMode = "one_hop" | "two_hop" | "shortest_path" | "book" | "relation_type" | "cross_book";
+
+const VIEW_MODE_LABELS: Record<ViewMode, string> = {
+  one_hop: "1-hop",
+  two_hop: "2-hop",
+  shortest_path: "最短経路",
+  book: "本",
+  relation_type: "関係",
+  cross_book: "横断",
+};
+
 function MapContent() {
   const searchParams = useSearchParams();
   const highlightParam = searchParams.get("highlight");
@@ -67,6 +78,15 @@ function MapContent() {
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
+  const [viewMode, setViewMode] = useState<ViewMode>("one_hop");
+  const [centerNodeId, setCenterNodeId] = useState<number | null>(highlightParam ? Number(highlightParam) : null);
+  const [pathFromId, setPathFromId] = useState<number | null>(null);
+  const [pathToId, setPathToId] = useState<number | null>(null);
+  const [selectedRelationTypes, setSelectedRelationTypes] = useState<string[]>([
+    "prerequisite",
+    "contrasts_with",
+    "supports",
+  ]);
   const [domain, setDomain] = useState("all");
   const [selectedBookIds, setSelectedBookIds] = useState<number[]>([]);
   const [bookPickerOpen, setBookPickerOpen] = useState(false);
@@ -124,6 +144,7 @@ function MapContent() {
   const handleNodeClick = useCallback((nodeId: number) => {
     if (pendingNodeIdRef.current === nodeId) return;
     pendingNodeIdRef.current = nodeId;
+    setCenterNodeId(nodeId);
     setHighlightId(nodeId);
     setInsightError(null);
     setSelectedLoading(true);
@@ -191,6 +212,26 @@ function MapContent() {
     ? 0
     : nodes.filter((node) => node.bookIds.some((bookId) => selectedBookIds.includes(bookId))).length;
   const bookTitleById = new Map(books.map((book) => [book.id, book.title]));
+  const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+
+  const displayedGraph = useMemo(() => {
+    switch (viewMode) {
+      case "one_hop":
+        return buildNeighborhoodGraph(nodes, edges, centerNodeId, 1);
+      case "two_hop":
+        return buildNeighborhoodGraph(nodes, edges, centerNodeId, 2);
+      case "shortest_path":
+        return buildShortestPathGraph(nodes, edges, pathFromId, pathToId);
+      case "book":
+        return buildBookGraph(nodes, edges, selectedBookIds);
+      case "relation_type":
+        return buildRelationTypeGraph(nodes, edges, selectedRelationTypes);
+      case "cross_book":
+        return buildCrossBookGraph(nodes, edges);
+      default:
+        return { nodes: [], edges: [] };
+    }
+  }, [centerNodeId, edges, nodes, pathFromId, pathToId, selectedBookIds, selectedRelationTypes, viewMode]);
 
   const toggleBook = useCallback((bookId: number) => {
     setSelectedBookIds((current) =>
@@ -223,6 +264,83 @@ function MapContent() {
               ))}
             </SelectContent>
           </Select>
+          <Select value={viewMode} onValueChange={(v) => setViewMode((v ?? "one_hop") as ViewMode)}>
+            <SelectTrigger className="w-32 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(VIEW_MODE_LABELS).map(([value, label]) => (
+                <SelectItem key={value} value={value}>{label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {(viewMode === "one_hop" || viewMode === "two_hop") && (
+            <Select
+              value={centerNodeId == null ? "none" : String(centerNodeId)}
+              onValueChange={(v) => setCenterNodeId(v === "none" ? null : Number(v))}
+            >
+              <SelectTrigger className="w-48 h-8 text-xs">
+                <SelectValue placeholder="中心概念" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">中心概念を選択</SelectItem>
+                {nodes.map((node) => (
+                  <SelectItem key={node.id} value={String(node.id)}>{node.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+
+          {viewMode === "shortest_path" && (
+            <>
+              <Select value={pathFromId == null ? "none" : String(pathFromId)} onValueChange={(v) => setPathFromId(v === "none" ? null : Number(v))}>
+                <SelectTrigger className="w-44 h-8 text-xs">
+                  <SelectValue placeholder="開始概念" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">開始概念</SelectItem>
+                  {nodes.map((node) => (
+                    <SelectItem key={node.id} value={String(node.id)}>{node.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={pathToId == null ? "none" : String(pathToId)} onValueChange={(v) => setPathToId(v === "none" ? null : Number(v))}>
+                <SelectTrigger className="w-44 h-8 text-xs">
+                  <SelectValue placeholder="到達概念" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">到達概念</SelectItem>
+                  {nodes.map((node) => (
+                    <SelectItem key={node.id} value={String(node.id)}>{node.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </>
+          )}
+
+          {viewMode === "relation_type" && (
+            <div className="flex max-w-80 flex-wrap gap-1 rounded-md border bg-background px-2 py-1">
+              {Object.entries(RELATION_LABELS).map(([type, { label }]) => (
+                <label key={type} className="flex h-6 items-center gap-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={selectedRelationTypes.includes(type)}
+                    onChange={() => {
+                      setSelectedRelationTypes((current) =>
+                        current.includes(type)
+                          ? current.filter((item) => item !== type)
+                          : [...current, type]
+                      );
+                    }}
+                    className="h-3 w-3 accent-primary"
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          )}
+
           <div className="relative">
             <Button
               type="button"
@@ -377,10 +495,14 @@ function MapContent() {
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             概念がありません。本を登録して解析してください。
           </div>
+        ) : displayedGraph.nodes.length === 0 ? (
+          <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+            {emptyGraphMessage(viewMode)}
+          </div>
         ) : (
           <CytoscapeView
-            nodes={nodes}
-            edges={edges}
+            nodes={displayedGraph.nodes}
+            edges={displayedGraph.edges}
             highlightId={highlightId}
             onNodeClick={handleNodeClick}
             onSelectionChange={handleSelectionChange}
@@ -554,7 +676,7 @@ function MapContent() {
                     {selected.relations.map((r) => {
                       const otherId =
                         r.fromConceptId === selected.concept.id ? r.toConceptId : r.fromConceptId;
-                      const otherNode = nodes.find((n) => n.id === otherId);
+                      const otherNode = nodeById.get(otherId);
                       const isCrossBook = r.bookId == null;
                       const sourceBookTitle = r.bookId == null ? null : bookTitleById.get(r.bookId);
                       return (
@@ -624,6 +746,141 @@ function RelationSwatch({ relationType, isCrossBook }: { relationType: string; i
       <polygon points="22,3 28,6 22,9" fill={color} />
     </svg>
   );
+}
+
+function buildNeighborhoodGraph(nodes: GraphNode[], edges: GraphEdge[], centerNodeId: number | null, depth: 1 | 2) {
+  if (centerNodeId == null) return { nodes: [], edges: [] };
+
+  const included = new Set([centerNodeId]);
+  let frontier = new Set([centerNodeId]);
+
+  for (let step = 0; step < depth; step += 1) {
+    const next = new Set<number>();
+    for (const edge of edges) {
+      if (frontier.has(edge.fromConceptId)) next.add(edge.toConceptId);
+      if (frontier.has(edge.toConceptId)) next.add(edge.fromConceptId);
+    }
+    for (const id of next) included.add(id);
+    frontier = next;
+  }
+
+  return filterGraph(nodes, edges, included);
+}
+
+function buildShortestPathGraph(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  fromId: number | null,
+  toId: number | null
+) {
+  if (fromId == null || toId == null || fromId === toId) return { nodes: [], edges: [] };
+
+  const adjacency = new Map<number, { next: number; edge: GraphEdge }[]>();
+  for (const edge of edges) {
+    adjacency.set(edge.fromConceptId, [...(adjacency.get(edge.fromConceptId) ?? []), { next: edge.toConceptId, edge }]);
+    adjacency.set(edge.toConceptId, [...(adjacency.get(edge.toConceptId) ?? []), { next: edge.fromConceptId, edge }]);
+  }
+
+  const queue = [fromId];
+  const visited = new Set([fromId]);
+  const previous = new Map<number, { prev: number; edge: GraphEdge }>();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (current == null || current === toId) break;
+
+    for (const { next, edge } of adjacency.get(current) ?? []) {
+      if (visited.has(next)) continue;
+      visited.add(next);
+      previous.set(next, { prev: current, edge });
+      queue.push(next);
+    }
+  }
+
+  if (!previous.has(toId)) return { nodes: [], edges: [] };
+
+  const pathNodeIds = new Set<number>([toId]);
+  const pathEdges: GraphEdge[] = [];
+  let current = toId;
+  while (current !== fromId) {
+    const step = previous.get(current);
+    if (!step) break;
+    pathNodeIds.add(step.prev);
+    pathEdges.push(step.edge);
+    current = step.prev;
+  }
+
+  const nodeList = nodes.filter((node) => pathNodeIds.has(node.id));
+  return { nodes: nodeList, edges: pathEdges.reverse() };
+}
+
+function buildBookGraph(nodes: GraphNode[], edges: GraphEdge[], selectedBookIds: number[]) {
+  if (selectedBookIds.length === 0) return { nodes: [], edges: [] };
+
+  const bookIds = new Set(selectedBookIds);
+  const nodeIds = new Set(
+    nodes
+      .filter((node) => node.bookIds.some((bookId) => bookIds.has(bookId)))
+      .map((node) => node.id)
+  );
+  const filteredEdges = edges.filter(
+    (edge) =>
+      edge.bookId != null &&
+      bookIds.has(edge.bookId) &&
+      nodeIds.has(edge.fromConceptId) &&
+      nodeIds.has(edge.toConceptId)
+  );
+
+  return {
+    nodes: nodes.filter((node) => nodeIds.has(node.id)),
+    edges: filteredEdges,
+  };
+}
+
+function buildRelationTypeGraph(nodes: GraphNode[], edges: GraphEdge[], selectedRelationTypes: string[]) {
+  if (selectedRelationTypes.length === 0) return { nodes: [], edges: [] };
+
+  const relationTypes = new Set(selectedRelationTypes);
+  const filteredEdges = edges.filter((edge) => relationTypes.has(edge.relationType));
+  const nodeIds = new Set(filteredEdges.flatMap((edge) => [edge.fromConceptId, edge.toConceptId]));
+  return {
+    nodes: nodes.filter((node) => nodeIds.has(node.id)),
+    edges: filteredEdges,
+  };
+}
+
+function buildCrossBookGraph(nodes: GraphNode[], edges: GraphEdge[]) {
+  const filteredEdges = edges.filter((edge) => edge.bookId == null);
+  const nodeIds = new Set(filteredEdges.flatMap((edge) => [edge.fromConceptId, edge.toConceptId]));
+  return {
+    nodes: nodes.filter((node) => nodeIds.has(node.id)),
+    edges: filteredEdges,
+  };
+}
+
+function filterGraph(nodes: GraphNode[], edges: GraphEdge[], nodeIds: Set<number>) {
+  return {
+    nodes: nodes.filter((node) => nodeIds.has(node.id)),
+    edges: edges.filter((edge) => nodeIds.has(edge.fromConceptId) && nodeIds.has(edge.toConceptId)),
+  };
+}
+
+function emptyGraphMessage(viewMode: ViewMode) {
+  switch (viewMode) {
+    case "one_hop":
+    case "two_hop":
+      return "中心概念を選ぶと、直接つながる概念だけを表示します。";
+    case "shortest_path":
+      return "開始概念と到達概念を選ぶと、その間の最短経路だけを表示します。";
+    case "book":
+      return "本を選ぶと、その本に含まれる概念と本内関係だけを表示します。";
+    case "relation_type":
+      return "関係タイプを選ぶと、その関係だけを表示します。";
+    case "cross_book":
+      return "横断関係がまだありません。新しい本を解析すると本をまたぐ関係が追加されます。";
+    default:
+      return "表示するグラフがありません。";
+  }
 }
 
 export default function MapPage() {
