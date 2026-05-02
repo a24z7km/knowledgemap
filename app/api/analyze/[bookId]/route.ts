@@ -175,7 +175,7 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
   } catch (err) {
     await db
       .update(books)
-      .set({ analyzeStatus: "error", analyzeError: String(err) })
+      .set({ analyzeStatus: "failed", analyzeError: String(err) })
       .where(eq(books.id, bookId));
   }
 }

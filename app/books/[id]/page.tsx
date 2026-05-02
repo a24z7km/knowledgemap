@@ -72,6 +72,7 @@ export default function BookDetailPage() {
   if (!book) return <div className="p-6 text-sm text-muted-foreground">読み込み中...</div>;
 
   const isAnalyzing = book.analyzeStatus === "analyzing";
+  const isAnalyzeFailed = book.analyzeStatus === "error" || book.analyzeStatus === "failed";
 
   return (
     <div className="max-w-screen-lg mx-auto px-4 py-6 space-y-6">
@@ -86,7 +87,7 @@ export default function BookDetailPage() {
           <p className="text-sm text-muted-foreground">{book.author}</p>
         </div>
         <div className="flex gap-2">
-          {(book.analyzeStatus === "pending" || book.analyzeStatus === "error") && (
+          {(book.analyzeStatus === "pending" || isAnalyzeFailed) && (
             <Button size="sm" onClick={analyze}>
               <Play className="w-3 h-3 mr-1" /> 解析する
             </Button>
@@ -109,7 +110,7 @@ export default function BookDetailPage() {
         </Card>
       )}
 
-      {book.analyzeStatus === "error" && (
+      {isAnalyzeFailed && (
         <Card className="border-red-200 bg-red-50">
           <CardContent className="py-3 text-sm text-red-700">
             解析エラー: {book.analyzeError}

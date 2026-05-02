@@ -31,6 +31,7 @@ const ANALYZE_MAP = {
   analyzing: { label: "解析中...", color: "default" as const },
   done: { label: "解析済", color: "default" as const },
   error: { label: "エラー", color: "destructive" as const },
+  failed: { label: "エラー", color: "destructive" as const },
 };
 
 type Tab = "manual" | "url" | "csv";

@@ -51,12 +51,12 @@ export default function DashboardPage() {
                   {b.title}
                 </Link>
                 <Badge variant={
-                  b.analyzeStatus === "error" ? "destructive" :
+                  (b.analyzeStatus === "error" || b.analyzeStatus === "failed") ? "destructive" :
                   b.analyzeStatus === "pending" ? "secondary" : "default"
                 }>
                   {b.analyzeStatus === "done" ? "解析済" :
                    b.analyzeStatus === "analyzing" ? "解析中..." :
-                   b.analyzeStatus === "error" ? "エラー" : "未解析"}
+                   (b.analyzeStatus === "error" || b.analyzeStatus === "failed") ? "エラー" : "未解析"}
                 </Badge>
               </div>
             ))}

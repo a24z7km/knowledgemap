@@ -29,7 +29,7 @@ function getDb() {
       author TEXT NOT NULL,
       read_status TEXT NOT NULL DEFAULT 'read' CHECK(read_status IN ('read','reading','want')),
       notes TEXT,
-      analyze_status TEXT NOT NULL DEFAULT 'pending' CHECK(analyze_status IN ('pending','analyzing','done','error')),
+      analyze_status TEXT NOT NULL DEFAULT 'pending' CHECK(analyze_status IN (${analyzeStatusSqlList()})),
       analyze_error TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -65,12 +65,74 @@ function getDb() {
   `);
 
   ensureRelationTypeConstraint(sqlite);
+  ensureAnalyzeStatusConstraint(sqlite);
 
   return _db;
 }
 
+function analyzeStatusSqlList() {
+  return "'pending','analyzing','done','error','failed'";
+}
+
 function relationTypeSqlList() {
   return RELATION_TYPES.map((type) => `'${type}'`).join(",");
+}
+
+function ensureAnalyzeStatusConstraint(sqlite: Database.Database) {
+  const table = sqlite
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'books'")
+    .get() as { sql?: string } | undefined;
+
+  if (table?.sql?.includes("'failed'")) return;
+
+  sqlite.exec("PRAGMA foreign_keys = OFF");
+  const migrateAnalyzeStatuses = sqlite.transaction(() => {
+    sqlite.exec(`
+      CREATE TABLE books_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        author TEXT NOT NULL,
+        read_status TEXT NOT NULL DEFAULT 'read' CHECK(read_status IN ('read','reading','want')),
+        notes TEXT,
+        analyze_status TEXT NOT NULL DEFAULT 'pending' CHECK(analyze_status IN (${analyzeStatusSqlList()})),
+        analyze_error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      INSERT INTO books_new (
+        id,
+        title,
+        author,
+        read_status,
+        notes,
+        analyze_status,
+        analyze_error,
+        created_at
+      )
+      SELECT
+        id,
+        title,
+        author,
+        read_status,
+        notes,
+        CASE
+          WHEN analyze_status IN (${analyzeStatusSqlList()}) THEN analyze_status
+          ELSE 'failed'
+        END,
+        analyze_error,
+        created_at
+      FROM books;
+
+      DROP TABLE books;
+      ALTER TABLE books_new RENAME TO books;
+    `);
+  });
+
+  try {
+    migrateAnalyzeStatuses();
+  } finally {
+    sqlite.exec("PRAGMA foreign_keys = ON");
+  }
 }
 
 function ensureRelationTypeConstraint(sqlite: Database.Database) {
