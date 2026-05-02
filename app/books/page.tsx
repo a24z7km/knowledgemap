@@ -274,7 +274,6 @@ export default function BooksPage() {
               <SelectItem value="o3-mini">o3-mini　〜3円/冊</SelectItem>
               <SelectItem value="gpt-4.1">gpt-4.1　〜6円/冊</SelectItem>
               <SelectItem value="gpt-4o">gpt-4o　〜7円/冊</SelectItem>
-              <SelectItem value="o1-mini">o1-mini　〜9円/冊</SelectItem>
               <SelectItem value="o3">o3　〜50円/冊</SelectItem>
             </SelectContent>
           </Select>
