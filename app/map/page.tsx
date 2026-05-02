@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { BookOpen, ExternalLink, Sparkles } from "lucide-react";
+import { BookOpen, ChevronDown, ExternalLink, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 import type { Book } from "@/lib/db/schema";
@@ -43,6 +43,7 @@ interface GraphNode {
   domain: string;
   description: string | null;
   bookCount: number;
+  bookIds: number[];
 }
 
 interface GraphEdge {
@@ -82,7 +83,8 @@ function MapContent() {
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
   const [domain, setDomain] = useState("all");
-  const [bookFilter, setBookFilter] = useState("all");
+  const [selectedBookIds, setSelectedBookIds] = useState<number[]>([]);
+  const [bookPickerOpen, setBookPickerOpen] = useState(false);
   const [selected, setSelected] = useState<ConceptDetail | null>(null);
   const [selectedLoading, setSelectedLoading] = useState(false);
   const [selectedError, setSelectedError] = useState<string | null>(null);
@@ -99,7 +101,6 @@ function MapContent() {
   const loadGraph = useCallback(() => {
     const params = new URLSearchParams();
     if (domain !== "all") params.set("domain", domain);
-    if (bookFilter !== "all") params.set("bookId", bookFilter);
     fetch(`/api/graph?${params}`)
       .then((r) => r.json())
       .then((data) => {
@@ -108,7 +109,7 @@ function MapContent() {
           setEdges(data.edges);
         }
       });
-  }, [domain, bookFilter]);
+  }, [domain]);
 
   useEffect(() => {
     loadGraph();
@@ -198,6 +199,20 @@ function MapContent() {
       .finally(() => setInsightLoading(false));
   }, [highlightId, selectedNodeIds]);
 
+  const analyzedBooks = books.filter((b) => b.analyzeStatus === "done");
+  const selectedBooks = analyzedBooks.filter((book) => selectedBookIds.includes(book.id));
+  const highlightedNodeCount = selectedBookIds.length === 0
+    ? 0
+    : nodes.filter((node) => node.bookIds.some((bookId) => selectedBookIds.includes(bookId))).length;
+
+  const toggleBook = useCallback((bookId: number) => {
+    setSelectedBookIds((current) =>
+      current.includes(bookId)
+        ? current.filter((id) => id !== bookId)
+        : [...current, bookId]
+    );
+  }, []);
+
   useEffect(() => {
     if (highlightId != null && selected?.concept.id !== highlightId && !selectedLoading) {
       const timer = window.setTimeout(() => handleNodeClick(highlightId), 0);
@@ -210,7 +225,7 @@ function MapContent() {
       {/* Graph */}
       <div className="flex-1 relative">
         {/* Filters */}
-        <div className="absolute top-3 left-3 z-10 flex gap-2 bg-background/90 backdrop-blur rounded-lg p-2 shadow-sm border">
+        <div className="absolute top-3 left-3 z-10 flex flex-wrap items-start gap-2 bg-background/90 backdrop-blur rounded-lg p-2 shadow-sm border max-w-[min(760px,calc(100%-1.5rem))]">
           <Select value={domain} onValueChange={(v) => setDomain(v ?? "all")}>
             <SelectTrigger className="w-36 h-8 text-xs">
               <SelectValue />
@@ -221,19 +236,65 @@ function MapContent() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={bookFilter} onValueChange={(v) => setBookFilter(v ?? "all")}>
-            <SelectTrigger className="w-44 h-8 text-xs">
-              <SelectValue placeholder="本でフィルタ" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">全ての本</SelectItem>
-              {books.filter((b) => b.analyzeStatus === "done").map((b) => (
-                <SelectItem key={b.id} value={String(b.id)}>
-                  {b.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="relative">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 w-48 justify-between gap-2 text-xs font-normal"
+              onClick={() => setBookPickerOpen((open) => !open)}
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <BookOpen className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">
+                  {selectedBookIds.length > 0 ? `${selectedBookIds.length}冊を表示` : "本を選択"}
+                </span>
+              </span>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            </Button>
+
+            {bookPickerOpen && (
+              <div className="absolute left-0 top-9 z-20 w-72 rounded-lg border bg-popover p-2 shadow-md">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium">本</p>
+                  {selectedBookIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedBookIds([])}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      解除
+                    </button>
+                  )}
+                </div>
+                <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+                  {analyzedBooks.map((book) => {
+                    const checked = selectedBookIds.includes(book.id);
+                    return (
+                      <label
+                        key={book.id}
+                        className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleBook(book.id)}
+                          className="mt-0.5 h-3.5 w-3.5 accent-primary"
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">{book.title}</span>
+                          <span className="block truncate text-muted-foreground">{book.author}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                  {analyzedBooks.length === 0 && (
+                    <p className="px-2 py-4 text-center text-xs text-muted-foreground">解析済みの本がありません</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <div className="flex rounded-md border overflow-hidden h-8 text-xs">
             <button
               onClick={() => setLang("ja")}
@@ -248,6 +309,29 @@ function MapContent() {
               EN
             </button>
           </div>
+
+          {selectedBooks.length > 0 && (
+            <div className="flex max-w-full flex-wrap items-center gap-1.5">
+              {selectedBooks.slice(0, 4).map((book) => (
+                <button
+                  key={book.id}
+                  type="button"
+                  onClick={() => toggleBook(book.id)}
+                  className="flex h-8 max-w-44 items-center gap-1 rounded-md border bg-muted px-2 text-xs"
+                  title={book.title}
+                >
+                  <span className="truncate">{book.title}</span>
+                  <X className="h-3 w-3 shrink-0 text-muted-foreground" />
+                </button>
+              ))}
+              {selectedBooks.length > 4 && (
+                <span className="text-xs text-muted-foreground">+{selectedBooks.length - 4}</span>
+              )}
+              <Badge variant="secondary" className="h-8 rounded-md">
+                {highlightedNodeCount}点
+              </Badge>
+            </div>
+          )}
         </div>
 
         {/* Legend */}
@@ -280,6 +364,7 @@ function MapContent() {
             onNodeClick={handleNodeClick}
             onSelectionChange={handleSelectionChange}
             lang={lang}
+            selectedBookIds={selectedBookIds}
           />
         )}
       </div>

@@ -26,6 +26,7 @@ interface Node {
   aliases: string;
   domain: string;
   bookCount: number;
+  bookIds: number[];
 }
 
 interface Edge {
@@ -43,6 +44,7 @@ interface Props {
   onNodeClick?: (nodeId: number) => void;
   onSelectionChange?: (nodeIds: number[]) => void;
   lang?: "en" | "ja";
+  selectedBookIds?: number[];
 }
 
 export default function CytoscapeView({
@@ -52,6 +54,7 @@ export default function CytoscapeView({
   onNodeClick,
   onSelectionChange,
   lang = "ja",
+  selectedBookIds = [],
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
@@ -77,6 +80,7 @@ export default function CytoscapeView({
             label,
             domain: n.domain,
             bookCount: n.bookCount ?? 1,
+            bookIds: n.bookIds ?? [],
           },
         };
       }),
@@ -143,6 +147,29 @@ export default function CytoscapeView({
                 EDGE_STYLES[ele.data("relationType")]?.lineColor ?? "#94a3b8",
               "curve-style": "bezier",
               opacity: 0.7,
+            },
+          },
+          {
+            selector: "node.book-dim",
+            style: {
+              opacity: 0.18,
+              "text-opacity": 0.18,
+            },
+          },
+          {
+            selector: "edge.book-dim",
+            style: {
+              opacity: 0.08,
+            },
+          },
+          {
+            selector: "node.book-match",
+            style: {
+              "border-width": (ele: cytoscape.NodeSingular) => 3 + Math.min(ele.data("selectedBookCount") ?? 1, 3),
+              "border-color": "#0f766e",
+              "border-style": "double",
+              opacity: 1,
+              "text-opacity": 1,
             },
           },
           {
@@ -216,6 +243,35 @@ export default function CytoscapeView({
       cy.getElementById(String(highlightId)).addClass("highlighted");
     }
   }, [highlightId]);
+
+  // Highlight concepts that appear in one or more selected books.
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    cy.elements().removeClass("book-match book-dim");
+    cy.nodes().removeData("selectedBookCount");
+
+    const selectedBooks = new Set(selectedBookIds);
+    if (selectedBooks.size === 0) return;
+
+    cy.nodes().forEach((node) => {
+      const bookIds = (node.data("bookIds") ?? []) as number[];
+      const selectedBookCount = bookIds.filter((bookId) => selectedBooks.has(bookId)).length;
+      if (selectedBookCount > 0) {
+        node.data("selectedBookCount", selectedBookCount);
+        node.addClass("book-match");
+      } else {
+        node.addClass("book-dim");
+      }
+    });
+
+    cy.edges().forEach((edge) => {
+      if (!edge.source().hasClass("book-match") || !edge.target().hasClass("book-match")) {
+        edge.addClass("book-dim");
+      }
+    });
+  }, [selectedBookIds]);
 
   return <div ref={containerRef} className="w-full h-full" />;
 }
