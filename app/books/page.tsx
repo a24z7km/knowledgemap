@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Trash2, Play, Link as LinkIcon, Upload } from "lucide-react";
+import { Download, Plus, Trash2, Play, Link as LinkIcon, Upload } from "lucide-react";
 import type { Book } from "@/lib/db/schema";
 
 const STATUS_MAP = {
@@ -214,6 +214,10 @@ export default function BooksPage() {
     load();
   };
 
+  const exportCsv = () => {
+    window.location.href = "/api/export/csv";
+  };
+
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -234,6 +238,10 @@ export default function BooksPage() {
               <SelectItem value="o3">o3　〜50円/冊</SelectItem>
             </SelectContent>
           </Select>
+          <Button variant="outline" size="sm" onClick={exportCsv} className="gap-1.5">
+            <Download className="w-4 h-4" />
+            CSV
+          </Button>
         </div>
         <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetDialog(); }}>
           <DialogTrigger render={<Button size="sm" />}>
