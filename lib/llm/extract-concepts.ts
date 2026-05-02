@@ -19,6 +19,15 @@ export type SourceType =
   | "categories"
   | "table_of_contents";
 
+const SOURCE_TYPES: SourceType[] = [
+  "title",
+  "subtitle",
+  "user_notes",
+  "google_books_description",
+  "categories",
+  "table_of_contents",
+];
+
 export interface SourceEvidence {
   sourceType: SourceType;
   evidenceText: string;
@@ -152,20 +161,23 @@ export async function extractConcepts(
         role: "system",
         content: `You are a knowledge extraction specialist. Extract the book-specific knowledge structure from the provided source material only.
 
-STRICT SOURCE-GROUNDING RULES (highest priority):
+SOURCE-GROUNDING RULES (highest priority):
 - Every concept must be grounded in the current book's source material (title, subtitle, user_notes, google_books_description, categories, or table_of_contents).
-- Do not import concepts from other books, previous analyses, existing map concepts, or general knowledge.
-- Do not mark a concept as book_specific unless it is explicitly supported by the source material.
-- If the source material is sparse, return fewer grounded concepts rather than inventing plausible ones.
-- Never infer concepts from "well-known structure of the book" or what the book "probably covers".
-- For each concept you extract, record the exact sourceType and evidenceText from the source material.
+- Concepts may be explicitly stated OR strongly implied by the source material. If the source identifies a field or organizing category (e.g. "brain chemicals", "neurotransmitters", "economics", "security controls"), you may decompose it into its core domain sub-concepts when the source strongly supports that field.
+- Do not import concepts from other books, previous analyses, existing map concepts, or unrelated general knowledge.
+- Do not infer concepts from the book's reputation or what it "probably covers" — only from the actual source text provided.
+- For each concept, record sourceEvidence: the sourceType and the evidenceText (the source phrase that grounds this concept — may be the exact term or the broader phrase that strongly implies it).
+- specificity rules:
+  - book_specific: the concept name or chapter title appears explicitly in the source material
+  - domain_specific: the source strongly identifies a field/domain, and this is a core concept of that domain — even if the exact term is not in the source
+  - generic: broad cross-domain theme not tied to any specific domain in the source. Keep generic <= 20%.
 
 Primary extraction goal:
-- Extract concepts that are explicitly present in the source material.
-- Prefer concepts that appear in chapter titles, repeated key terms, named theories, mechanisms, models, technical terms, author-specific ideas, and domain vocabulary found in the source.
-- Do not fill the output with broad labels such as Motivation, Productivity, Leadership, Risk Management, Learning, Mindfulness, Ethics, Happiness, or Decision Making unless the source material explicitly names one as a central concept.
-- If the source material contains proper nouns, specialist terms, chapter-level keywords, theory names, model names, mechanisms, metrics, technical terms, or named distinctions, extract those before abstract themes.
-- Use abstract themes only when they support or connect specific concepts found in the source.
+- First identify the organizing axis of the book from its title, subtitle, description, categories, and table of contents.
+- Extract chapter-level, repeated, named, specialist, or author-specific concepts explicitly present in the source first.
+- When the source names a broad domain category (e.g. "brain chemicals", "microeconomics", "authentication"), decompose it into the most central sub-concepts of that domain.
+- Do not fill the output with generic labels (Motivation, Leadership, Risk Management, Mindfulness, Happiness, Decision Making) unless the source explicitly uses them as a central named concept.
+- Use abstract themes only as supporting or context concepts, not as the core of the extraction.
 
 Treat the following as valid concepts, in priority order:
 1. Book-specific or author-specific named concepts and chapter-level terms
@@ -245,7 +257,7 @@ Output balance:
       },
       {
         role: "user",
-        content: `Extract knowledge concepts from this book. Only extract concepts that are directly supported by the source material below.
+        content: `Extract knowledge concepts from this book. Ground every concept in the source material below.
 
 Title: ${title}
 Author: ${author}
@@ -255,17 +267,25 @@ ${notes || "(No source material provided. Return an empty list — do not invent
 
 Extraction procedure:
 1. Read the source material carefully.
-2. Extract only concepts that appear explicitly in the source material (title, subtitle, user_notes, google_books_description, categories, table_of_contents).
-3. For each concept, record sourceEvidence with the exact sourceType and a verbatim or near-verbatim evidenceText from the source.
-4. Do not add concepts from other books, general knowledge, or your prior training about what this book "typically covers".
-5. If the source material mentions few specific terms, return fewer concepts. Quality over quantity.
+2. Identify the organizing axis: field, central topic, named theories, chapter structure, key terms.
+3. Extract concepts that are explicitly named in the source first (mark these book_specific if they appear verbatim, domain_specific if they are core domain terms implied by the source).
+4. When the source strongly identifies a specific domain (e.g. "脳内物質" → neuroscience; "microeconomics" → economics; "zero trust" → cybersecurity), decompose into the central sub-concepts of that domain and mark them domain_specific with the source phrase as evidenceText.
+5. Do not add concepts from other books, prior analyses, or unrelated general knowledge.
+6. For each concept, set sourceEvidence: { sourceType: (which source field), evidenceText: (the phrase from the source that grounds this concept) }.
 
-Prefer:
-- "Dopamine", "Reward System", "Working Memory" over only "Motivation" or "Focus" — but only if they appear in the source
-- "Opportunity Cost", "Demand Curve" over only "Decision Making" — but only if they appear in the source
-- "Zero Trust", "Authentication", "Threat Modeling" over only "Risk Management" — but only if they appear in the source
+Example: if subtitle says "脳内物質で仕事の精度と速度を上げる方法":
+- "Brain Chemicals" → book_specific (subtitle names it directly)
+- "Dopamine" → domain_specific, evidenceText="脳内物質で仕事の精度と速度を上げる方法" (neuroscience decomposition)
+- "Serotonin" → domain_specific, same evidenceText
+- "Work Performance" → domain_specific, evidenceText="仕事の精度と速度を上げる"
+NOT allowed: "Zero-Second Thinking", "Mindfulness", "Emotional Intelligence" (not grounded in this source)
 
-If only broad themes are available in the source, mark them as generic and keep them under 20%. Return 8-60 concepts; return fewer if the source is sparse.`,
+Prefer specific domain terms over generic labels:
+- "Dopamine", "Serotonin", "Noradrenaline", "Working Memory" over only "Motivation" or "Focus"
+- "Opportunity Cost", "Demand Curve", "Marginal Utility" over only "Decision Making"
+- "Zero Trust", "Authentication", "Threat Modeling" over only "Risk Management"
+
+Return 10-60 concepts. Even with title/subtitle/description only, aim for 10-25 well-grounded concepts. Generic concepts must stay under 20%.`,
       },
     ],
   });
@@ -277,7 +297,7 @@ If only broad themes are available in the source, mark them as generic and keep 
 
   const input = JSON.parse(toolCall.function.arguments) as { concepts: ExtractedConcept[] };
   const all = normalizeExtractedConcepts(input.concepts ?? []);
-  return all.filter((c) => c.sourceEvidence?.sourceType && c.sourceEvidence?.evidenceText);
+  return all.filter((c) => SOURCE_TYPES.includes(c.sourceEvidence?.sourceType as SourceType));
 }
 
 function normalizeExtractedConcepts(concepts: ExtractedConcept[]): ExtractedConcept[] {
@@ -309,15 +329,6 @@ function normalizeExtractedConcepts(concepts: ExtractedConcept[]): ExtractedConc
     return genericCount <= genericLimit;
   });
 }
-
-const SOURCE_TYPES: SourceType[] = [
-  "title",
-  "subtitle",
-  "user_notes",
-  "google_books_description",
-  "categories",
-  "table_of_contents",
-];
 
 function normalizeExtractedConcept(concept: ExtractedConcept): ExtractedConcept {
   return {
