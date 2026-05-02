@@ -220,13 +220,18 @@ export default function BooksPage() {
         <h1 className="text-2xl font-bold">本一覧</h1>
         <div className="flex items-center gap-2 ml-auto">
           <Select value={model} onValueChange={(v) => setModel(v ?? "gpt-4o-mini")}>
-            <SelectTrigger className="w-40 h-8 text-xs">
+            <SelectTrigger className="w-56 h-8 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="gpt-4o-mini">gpt-4o-mini（安い）</SelectItem>
-              <SelectItem value="gpt-4o">gpt-4o（高精度）</SelectItem>
-              <SelectItem value="o1-mini">o1-mini（推論）</SelectItem>
+              <SelectItem value="gpt-4o-mini">gpt-4o-mini　〜0.5円/冊</SelectItem>
+              <SelectItem value="gpt-4.1-mini">gpt-4.1-mini　〜1円/冊</SelectItem>
+              <SelectItem value="o4-mini">o4-mini　〜3円/冊</SelectItem>
+              <SelectItem value="o3-mini">o3-mini　〜3円/冊</SelectItem>
+              <SelectItem value="gpt-4.1">gpt-4.1　〜6円/冊</SelectItem>
+              <SelectItem value="gpt-4o">gpt-4o　〜7円/冊</SelectItem>
+              <SelectItem value="o1-mini">o1-mini　〜9円/冊</SelectItem>
+              <SelectItem value="o3">o3　〜50円/冊</SelectItem>
             </SelectContent>
           </Select>
         </div>
