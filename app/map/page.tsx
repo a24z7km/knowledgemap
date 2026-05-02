@@ -70,9 +70,10 @@ interface MapInsight {
   bookSuggestions: BookSuggestion[];
 }
 
-type ViewMode = "one_hop" | "two_hop" | "shortest_path" | "book" | "relation_type" | "cross_book";
+type ViewMode = "all" | "one_hop" | "two_hop" | "shortest_path" | "book" | "relation_type" | "cross_book";
 
 const VIEW_MODE_LABELS: Record<ViewMode, string> = {
+  all: "全体",
   one_hop: "1-hop",
   two_hop: "2-hop",
   shortest_path: "最短経路",
@@ -89,7 +90,7 @@ function MapContent() {
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>("one_hop");
+  const [viewMode, setViewMode] = useState<ViewMode>("all");
   const [centerNodeId, setCenterNodeId] = useState<number | null>(highlightParam ? Number(highlightParam) : null);
   const [pathFromId, setPathFromId] = useState<number | null>(null);
   const [pathToId, setPathToId] = useState<number | null>(null);
@@ -237,6 +238,8 @@ function MapContent() {
 
   const displayedGraph = useMemo(() => {
     switch (viewMode) {
+      case "all":
+        return { nodes, edges };
       case "one_hop":
         return buildNeighborhoodGraph(nodes, edges, centerNodeId, 1);
       case "two_hop":
@@ -307,7 +310,7 @@ function MapContent() {
             value={viewMode}
             onValueChange={(v) => {
               clearSelectionSummary();
-              setViewMode((v ?? "one_hop") as ViewMode);
+              setViewMode((v ?? "all") as ViewMode);
             }}
           >
             <SelectTrigger className="w-32 h-8 text-xs">
@@ -998,6 +1001,8 @@ function filterGraph(nodes: GraphNode[], edges: GraphEdge[], nodeIds: Set<number
 
 function emptyGraphMessage(viewMode: ViewMode) {
   switch (viewMode) {
+    case "all":
+      return "まだ概念がありません。本を追加して解析してください。";
     case "one_hop":
     case "two_hop":
       return "ドットをクリックすると、その概念を中心に周辺だけを表示します。";
