@@ -340,8 +340,14 @@ export default function BooksPage() {
                   {ANALYZE_MAP[book.analyzeStatus].label}
                 </Badge>
                 <div className="flex gap-1">
-                  {(book.analyzeStatus === "pending" || book.analyzeStatus === "error") && (
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => analyze(book)}>
+                  {book.analyzeStatus !== "analyzing" && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title={book.analyzeStatus === "done" ? "再解析" : "解析"}
+                      onClick={() => analyze(book)}
+                    >
                       <Play className="w-3 h-3" />
                     </Button>
                   )}
