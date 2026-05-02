@@ -1,7 +1,7 @@
-import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 import type { ExtractedConcept } from "./extract-concepts";
 
-const client = new Anthropic();
+const client = new OpenAI();
 
 export interface ExtractedRelation {
   from: string;
@@ -10,33 +10,36 @@ export interface ExtractedRelation {
   evidence: string;
 }
 
-const RELATION_TOOL: Anthropic.Tool = {
-  name: "save_relations",
-  description: "Save extracted relationships between concepts",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      relations: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            from: { type: "string", description: "Source concept name (exact match from list)" },
-            to: { type: "string", description: "Target concept name (exact match from list)" },
-            type: {
-              type: "string",
-              enum: ["prerequisite", "related", "contradicts", "extends", "applies_to"],
-              description:
-                "prerequisite: A must be understood before B; related: general connection; contradicts: opposing views; extends: B builds on A; applies_to: A is applied in context of B",
+const RELATION_TOOL: OpenAI.ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "save_relations",
+    description: "Save extracted relationships between concepts",
+    parameters: {
+      type: "object",
+      properties: {
+        relations: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              from: { type: "string", description: "Source concept name (exact match from list)" },
+              to: { type: "string", description: "Target concept name (exact match from list)" },
+              type: {
+                type: "string",
+                enum: ["prerequisite", "related", "contradicts", "extends", "applies_to"],
+                description:
+                  "prerequisite: A must be understood before B; related: general connection; contradicts: opposing views; extends: B builds on A; applies_to: A is applied in context of B",
+              },
+              evidence: { type: "string", description: "Brief justification for this relationship" },
             },
-            evidence: { type: "string", description: "Brief justification for this relationship" },
+            required: ["from", "to", "type", "evidence"],
           },
-          required: ["from", "to", "type", "evidence"],
+          minItems: 1,
         },
-        minItems: 1,
       },
+      required: ["relations"],
     },
-    required: ["relations"],
   },
 };
 
@@ -46,12 +49,15 @@ export async function extractRelations(
 ): Promise<ExtractedRelation[]> {
   const conceptList = concepts.map((c) => `- ${c.name} (${c.domain}): ${c.description}`).join("\n");
 
-  const response = await client.messages.create({
-    model: "claude-sonnet-4-6",
+  const response = await client.chat.completions.create({
+    model: "gpt-4o-mini",
     max_tokens: 4096,
     tools: [RELATION_TOOL],
-    tool_choice: { type: "tool", name: "save_relations" },
-    system: `You are a knowledge graph specialist. Identify meaningful relationships between concepts.
+    tool_choice: { type: "function", function: { name: "save_relations" } },
+    messages: [
+      {
+        role: "system",
+        content: `You are a knowledge graph specialist. Identify meaningful relationships between concepts.
 
 Relationship types:
 - prerequisite: understanding A is needed before B
@@ -61,7 +67,7 @@ Relationship types:
 - applies_to: A is a technique/tool applied in domain B
 
 Only create relationships that are substantive. Prefer fewer high-quality edges over many weak ones.`,
-    messages: [
+      },
       {
         role: "user",
         content: `Find relationships between these concepts from "${title}":
@@ -73,12 +79,12 @@ Create edges that represent meaningful knowledge dependencies and connections. E
     ],
   });
 
-  const toolUse = response.content.find((b) => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error("LLM did not return tool_use block");
+  const toolCall = response.choices[0]?.message?.tool_calls?.[0];
+  if (!toolCall || toolCall.type !== "function") {
+    throw new Error("LLM did not return function call");
   }
 
-  const input = toolUse.input as { relations: ExtractedRelation[] };
+  const input = JSON.parse(toolCall.function.arguments) as { relations: ExtractedRelation[] };
 
   // Filter to only relations between known concept names
   const names = new Set(concepts.map((c) => c.name));
