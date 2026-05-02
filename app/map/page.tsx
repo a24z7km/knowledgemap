@@ -12,7 +12,7 @@ import { BookOpen, ChevronDown, ExternalLink, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 import type { Book } from "@/lib/db/schema";
-import { RELATION_LABELS, relationLabel } from "@/lib/relations";
+import { RELATION_LABELS, relationColor, relationDash, relationLabel } from "@/lib/relations";
 import { DOMAIN_LABELS, domainLabel } from "@/lib/domains";
 
 const CytoscapeView = dynamic(() => import("@/components/graph/CytoscapeView"), {
@@ -37,6 +37,7 @@ interface GraphEdge {
   relationType: string;
   weight: number;
   evidence: string | null;
+  bookId: number | null;
 }
 
 interface ConceptDetail {
@@ -188,6 +189,7 @@ function MapContent() {
   const highlightedNodeCount = selectedBookIds.length === 0
     ? 0
     : nodes.filter((node) => node.bookIds.some((bookId) => selectedBookIds.includes(bookId))).length;
+  const bookTitleById = new Map(books.map((book) => [book.id, book.title]));
 
   const toggleBook = useCallback((bookId: number) => {
     setSelectedBookIds((current) =>
@@ -319,21 +321,38 @@ function MapContent() {
         </div>
 
         {/* Legend */}
-        <div className="absolute bottom-3 right-3 z-10 bg-background/90 backdrop-blur rounded-lg p-2 shadow-sm border text-xs space-y-1">
-          <p className="font-medium">エッジの種類</p>
-          {Object.entries(RELATION_LABELS).map(([k, { label, color, dash }]) => (
-            <div key={k} className="flex items-center gap-1.5">
-              <svg width="16" height="10" className="shrink-0">
-                <line
-                  x1="0" y1="5" x2="12" y2="5"
-                  stroke={color} strokeWidth="2"
-                  strokeDasharray={dash}
-                />
-                <polygon points="12,2 16,5 12,8" fill={color} />
+        <div className="absolute bottom-3 right-3 z-10 max-h-[46vh] w-52 overflow-y-auto bg-background/90 backdrop-blur rounded-lg p-2 shadow-sm border text-xs space-y-3">
+          <div className="space-y-1">
+            <p className="font-medium">関係の範囲</p>
+            <div className="flex items-center gap-1.5">
+              <svg width="28" height="10" className="shrink-0">
+                <line x1="0" y1="5" x2="26" y2="5" stroke="#64748b" strokeWidth="2" />
               </svg>
-              {label}
+              本内関係
             </div>
-          ))}
+            <div className="flex items-center gap-1.5">
+              <svg width="28" height="10" className="shrink-0">
+                <line x1="0" y1="5" x2="26" y2="5" stroke="#0f172a" strokeWidth="3" strokeDasharray="1 3" />
+              </svg>
+              横断関係
+            </div>
+          </div>
+          <div className="space-y-1">
+            <p className="font-medium">関係タイプ</p>
+            {Object.entries(RELATION_LABELS).map(([k, { label, color, dash }]) => (
+              <div key={k} className="flex items-center gap-1.5">
+                <svg width="16" height="10" className="shrink-0">
+                  <line
+                    x1="0" y1="5" x2="12" y2="5"
+                    stroke={color} strokeWidth="2"
+                    strokeDasharray={dash}
+                  />
+                  <polygon points="12,2 16,5 12,8" fill={color} />
+                </svg>
+                {label}
+              </div>
+            ))}
+          </div>
         </div>
 
         {nodes.length === 0 ? (
@@ -477,7 +496,15 @@ function MapContent() {
             <Separator />
 
             <div>
-              <p className="text-xs font-medium mb-2">📚 参照元の本 ({selected.appearances.length}冊)</p>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="text-xs font-medium">参照元の本</p>
+                <Badge variant="secondary" className="text-xs">{selected.appearances.length}冊</Badge>
+              </div>
+              {selected.appearances.length > 1 && (
+                <p className="mb-2 text-xs text-muted-foreground">
+                  複数の本で登場している概念です。
+                </p>
+              )}
               <div className="space-y-2">
                 {selected.appearances.map((a) => (
                   <div key={a.bookId} className="rounded-md border p-2 text-xs space-y-1 hover:bg-muted/50 transition-colors">
@@ -485,10 +512,12 @@ function MapContent() {
                       <span>{a.bookTitle}</span>
                       <ExternalLink className="w-3 h-3 shrink-0 mt-0.5" />
                     </Link>
-                    <p className="text-muted-foreground">{a.bookAuthor}</p>
-                    <p className="text-yellow-500 tracking-tighter">
-                      {"★".repeat(a.importance)}{"☆".repeat(5 - a.importance)}
-                    </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="truncate text-muted-foreground">{a.bookAuthor}</p>
+                      <span className="shrink-0 text-yellow-500 tracking-tighter">
+                        {"★".repeat(a.importance)}{"☆".repeat(5 - a.importance)}
+                      </span>
+                    </div>
                     {a.excerpt && (
                       <p className="italic border-l-2 pl-2 text-muted-foreground">{a.excerpt}</p>
                     )}
@@ -502,22 +531,46 @@ function MapContent() {
                 <Separator />
                 <div>
                   <p className="text-xs font-medium mb-2">関係 ({selected.relations.length}件)</p>
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     {selected.relations.map((r) => {
                       const otherId =
                         r.fromConceptId === selected.concept.id ? r.toConceptId : r.fromConceptId;
                       const otherNode = nodes.find((n) => n.id === otherId);
+                      const isCrossBook = r.bookId == null;
+                      const sourceBookTitle = r.bookId == null ? null : bookTitleById.get(r.bookId);
                       return (
-                        <button
+                        <div
                           key={r.id}
-                          onClick={() => handleNodeClick(otherId)}
-                          className="w-full text-left text-xs hover:bg-muted rounded px-2 py-1 flex items-center gap-2"
+                          className={`rounded-md border p-2 text-xs ${
+                            isCrossBook ? "border-slate-300 bg-slate-50/70" : "hover:bg-muted/50"
+                          }`}
                         >
-                          <Badge variant="outline" className="text-xs shrink-0">
-                            {relationLabel(r.relationType)}
-                          </Badge>
-                          <span className="truncate">{otherNode?.name ?? `#${otherId}`}</span>
-                        </button>
+                          <button
+                            onClick={() => handleNodeClick(otherId)}
+                            className="flex w-full items-center gap-2 text-left"
+                          >
+                            <RelationSwatch relationType={r.relationType} isCrossBook={isCrossBook} />
+                            <span className="min-w-0 flex-1 truncate font-medium">{otherNode?.name ?? `#${otherId}`}</span>
+                          </button>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            <Badge variant="outline" className="text-xs">
+                              {relationLabel(r.relationType)}
+                            </Badge>
+                            <Badge variant={isCrossBook ? "default" : "secondary"} className="text-xs">
+                              {isCrossBook ? "横断関係" : "本内関係"}
+                            </Badge>
+                            {sourceBookTitle && (
+                              <span className="min-w-0 truncate text-muted-foreground">
+                                {sourceBookTitle}
+                              </span>
+                            )}
+                          </div>
+                          {r.evidence && (
+                            <p className="mt-2 border-l-2 pl-2 text-muted-foreground">
+                              {r.evidence}
+                            </p>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -532,6 +585,25 @@ function MapContent() {
         )}
       </div>
     </div>
+  );
+}
+
+function RelationSwatch({ relationType, isCrossBook }: { relationType: string; isCrossBook: boolean }) {
+  const color = relationColor(relationType);
+  const dash = isCrossBook ? "1 3" : relationDash(relationType);
+  return (
+    <svg width="28" height="12" className="shrink-0">
+      <line
+        x1="0"
+        y1="6"
+        x2="22"
+        y2="6"
+        stroke={color}
+        strokeWidth={isCrossBook ? 3 : 2}
+        strokeDasharray={dash}
+      />
+      <polygon points="22,3 28,6 22,9" fill={color} />
+    </svg>
   );
 }
 

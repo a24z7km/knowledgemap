@@ -20,6 +20,7 @@ interface Edge {
   toConceptId: number;
   relationType: string;
   weight: number;
+  bookId: number | null;
 }
 
 interface Props {
@@ -76,6 +77,7 @@ export default function CytoscapeView({
           target: String(e.toConceptId),
           relationType: e.relationType,
           weight: e.weight,
+          scope: e.bookId == null ? "cross_book" : "book",
         },
       })),
     ];
@@ -128,6 +130,22 @@ export default function CytoscapeView({
               "target-arrow-color": (ele: cytoscape.EdgeSingular) => relationColor(ele.data("relationType")),
               "curve-style": "bezier",
               opacity: 0.7,
+            },
+          },
+          {
+            selector: 'edge[scope = "cross_book"]',
+            style: {
+              label: "横断",
+              width: (ele: cytoscape.EdgeSingular) => 2.5 + (ele.data("weight") ?? 1) * 0.7,
+              "line-style": "dotted",
+              "text-rotation": "autorotate",
+              "font-size": "8px",
+              color: "#0f172a",
+              "text-background-color": "#ffffff",
+              "text-background-opacity": 0.85,
+              "text-background-padding": "2px",
+              "text-margin-y": -4,
+              opacity: 0.9,
             },
           },
           {
