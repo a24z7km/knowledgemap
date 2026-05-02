@@ -133,7 +133,7 @@ export default function BookDetailPage() {
               抽出された概念 ({concepts.length}件)
             </CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="overflow-y-auto max-h-[60vh]">
             <div className="space-y-3">
               {concepts
                 .sort((a, b) => b.importance - a.importance)
