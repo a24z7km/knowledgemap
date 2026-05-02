@@ -97,25 +97,15 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
       }
     }
 
-    // Step 2: Build structured extraction context.
+    // Step 2: Build structured extraction context (current book only — no existing concepts).
     const googleBooks = await fetchGoogleBooksInfo(title, author);
-    const existingConcepts = await db.select().from(concepts);
-    const enrichedNotes = buildExtractionSource({
-      title,
-      author,
-      notes,
-      googleBooks,
-      existingConcepts: existingConcepts.map((concept) => ({
-        name: concept.name,
-        domain: concept.domain,
-        description: concept.description,
-      })),
-    });
+    const enrichedNotes = buildExtractionSource({ title, author, notes, googleBooks });
 
     // Step 3: Extract concepts
     const extracted = await extractConcepts(title, author, enrichedNotes, model);
 
     // Step 4: Normalize + upsert concepts
+    const existingConcepts = await db.select().from(concepts);
     const conceptIndex = new Map<string, (typeof existingConcepts)[number]>();
     for (const concept of existingConcepts) {
       const aliases = parseAliases(concept.aliases);
@@ -248,13 +238,11 @@ function buildExtractionSource({
   author,
   notes,
   googleBooks,
-  existingConcepts,
 }: {
   title: string;
   author: string;
   notes: string;
   googleBooks: GoogleBooksInfo | null;
-  existingConcepts: { name: string; domain: string; description: string | null }[];
 }) {
   const parts: string[] = [
     `[Book Metadata]
@@ -278,21 +266,9 @@ ${googleBooks?.categories?.length ? googleBooks.categories.join(", ") : "(No cat
   parts.push(`[Table of Contents]
 ${googleBooks?.tableOfContents?.length ? googleBooks.tableOfContents.map((item) => `- ${item}`).join("\n") : "(No table of contents found.)"}`);
 
-  parts.push(`[Existing Concepts Context]
-Use this only to avoid accidental duplicates and to connect to the existing map. Do not let these existing broad concepts replace book-specific concepts from the current book.
-${formatExistingConcepts(existingConcepts)}`);
-
   return parts.join("\n\n");
 }
 
-function formatExistingConcepts(existingConcepts: { name: string; domain: string; description: string | null }[]) {
-  if (existingConcepts.length === 0) return "(No existing concepts yet.)";
-
-  return existingConcepts
-    .slice(0, 120)
-    .map((concept) => `- ${concept.name} [${concept.domain}]${concept.description ? `: ${concept.description}` : ""}`)
-    .join("\n");
-}
 
 async function buildCrossBookRelationContext(
   bookId: number,

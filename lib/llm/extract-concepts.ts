@@ -11,6 +11,19 @@ import {
 
 const client = new OpenAI();
 
+export type SourceType =
+  | "title"
+  | "subtitle"
+  | "user_notes"
+  | "google_books_description"
+  | "categories"
+  | "table_of_contents";
+
+export interface SourceEvidence {
+  sourceType: SourceType;
+  evidenceText: string;
+}
+
 export interface ExtractedConcept {
   name: string;
   nameJa: string;
@@ -21,6 +34,7 @@ export interface ExtractedConcept {
   conceptLevel: ConceptLevel;
   conceptType: ConceptType;
   specificity: Specificity;
+  sourceEvidence: SourceEvidence;
 }
 
 const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
@@ -83,6 +97,22 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
                 description:
                   "book_specific=strongly tied to this book/author/chapter structure; domain_specific=important specialized domain concept; generic=broad cross-domain label. Keep generic at or below 20%.",
               },
+              sourceEvidence: {
+                type: "object",
+                description: "The source field and exact text that justifies extracting this concept. Required for every concept.",
+                properties: {
+                  sourceType: {
+                    type: "string",
+                    enum: ["title", "subtitle", "user_notes", "google_books_description", "categories", "table_of_contents"],
+                    description: "Which part of the source material this concept comes from",
+                  },
+                  evidenceText: {
+                    type: "string",
+                    description: "The specific text from the source material that supports this concept",
+                  },
+                },
+                required: ["sourceType", "evidenceText"],
+              },
             },
             required: [
               "name",
@@ -94,9 +124,10 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
               "conceptLevel",
               "conceptType",
               "specificity",
+              "sourceEvidence",
             ],
           },
-          minItems: 18,
+          minItems: 8,
           maxItems: 60,
         },
       },
@@ -119,14 +150,22 @@ export async function extractConcepts(
     messages: [
       {
         role: "system",
-        content: `You are a knowledge extraction specialist. Extract the book-specific knowledge structure of each book across business, management, economics, psychology, neuroscience, health, philosophy, sociology, history, politics, education, cybersecurity, security, technology, finance, law, math, and computer science.
+        content: `You are a knowledge extraction specialist. Extract the book-specific knowledge structure from the provided source material only.
+
+STRICT SOURCE-GROUNDING RULES (highest priority):
+- Every concept must be grounded in the current book's source material (title, subtitle, user_notes, google_books_description, categories, or table_of_contents).
+- Do not import concepts from other books, previous analyses, existing map concepts, or general knowledge.
+- Do not mark a concept as book_specific unless it is explicitly supported by the source material.
+- If the source material is sparse, return fewer grounded concepts rather than inventing plausible ones.
+- Never infer concepts from "well-known structure of the book" or what the book "probably covers".
+- For each concept you extract, record the exact sourceType and evidenceText from the source material.
 
 Primary extraction goal:
-- First infer what the book is organized around: chapter titles, repeated key terms, named theories, mechanisms, models, institutions, technical terms, author-specific ideas, and domain vocabulary.
-- Prefer concepts that reveal the book's center of gravity and internal structure.
-- Do not fill the output with broad labels such as Motivation, Productivity, Leadership, Risk Management, Learning, Mindfulness, Ethics, Happiness, or Decision Making unless the book explicitly treats one as a central named concept.
+- Extract concepts that are explicitly present in the source material.
+- Prefer concepts that appear in chapter titles, repeated key terms, named theories, mechanisms, models, technical terms, author-specific ideas, and domain vocabulary found in the source.
+- Do not fill the output with broad labels such as Motivation, Productivity, Leadership, Risk Management, Learning, Mindfulness, Ethics, Happiness, or Decision Making unless the source material explicitly names one as a central concept.
 - If the source material contains proper nouns, specialist terms, chapter-level keywords, theory names, model names, mechanisms, metrics, technical terms, or named distinctions, extract those before abstract themes.
-- Use abstract themes only when they support or connect specific concepts.
+- Use abstract themes only when they support or connect specific concepts found in the source.
 
 Treat the following as valid concepts, in priority order:
 1. Book-specific or author-specific named concepts and chapter-level terms
@@ -206,28 +245,27 @@ Output balance:
       },
       {
         role: "user",
-        content: `Extract 18-60 knowledge units from this book. Focus on the book's central structure, not generic topic summaries.
+        content: `Extract knowledge concepts from this book. Only extract concepts that are directly supported by the source material below.
 
 Title: ${title}
 Author: ${author}
 
 Structured source material:
-${notes || "(No notes provided — infer likely central concepts from the title, author, and well-known structure of the book, but avoid unsupported generic filler.)"}
+${notes || "(No source material provided. Return an empty list — do not invent concepts.)"}
 
 Extraction procedure:
-1. Identify the organizing axis of the book.
-2. Extract chapter-level, repeated, named, specialist, or author-specific concepts first.
-3. Add supporting concepts that explain those core terms.
-4. Add practices/applications and outcomes only after the core structure is represented.
+1. Read the source material carefully.
+2. Extract only concepts that appear explicitly in the source material (title, subtitle, user_notes, google_books_description, categories, table_of_contents).
+3. For each concept, record sourceEvidence with the exact sourceType and a verbatim or near-verbatim evidenceText from the source.
+4. Do not add concepts from other books, general knowledge, or your prior training about what this book "typically covers".
+5. If the source material mentions few specific terms, return fewer concepts. Quality over quantity.
 
 Prefer:
-- "Dopamine", "Reward System", "Working Memory" over only "Motivation" or "Focus"
-- "Opportunity Cost", "Demand Curve" over only "Decision Making"
-- "Zero Trust", "Authentication", "Threat Modeling" over only "Risk Management"
-- "Utilitarianism", "Deontology" over only "Ethics"
-- "Psychological Safety", "Transaction Cost" over only "Leadership"
+- "Dopamine", "Reward System", "Working Memory" over only "Motivation" or "Focus" — but only if they appear in the source
+- "Opportunity Cost", "Demand Curve" over only "Decision Making" — but only if they appear in the source
+- "Zero Trust", "Authentication", "Threat Modeling" over only "Risk Management" — but only if they appear in the source
 
-Return enough concepts to preserve the book's structure. If only broad themes are available, mark them as generic and keep them under 20%.`,
+If only broad themes are available in the source, mark them as generic and keep them under 20%. Return 8-60 concepts; return fewer if the source is sparse.`,
       },
     ],
   });
@@ -238,7 +276,8 @@ Return enough concepts to preserve the book's structure. If only broad themes ar
   }
 
   const input = JSON.parse(toolCall.function.arguments) as { concepts: ExtractedConcept[] };
-  return normalizeExtractedConcepts(input.concepts ?? []);
+  const all = normalizeExtractedConcepts(input.concepts ?? []);
+  return all.filter((c) => c.sourceEvidence?.sourceType && c.sourceEvidence?.evidenceText);
 }
 
 function normalizeExtractedConcepts(concepts: ExtractedConcept[]): ExtractedConcept[] {
@@ -271,6 +310,15 @@ function normalizeExtractedConcepts(concepts: ExtractedConcept[]): ExtractedConc
   });
 }
 
+const SOURCE_TYPES: SourceType[] = [
+  "title",
+  "subtitle",
+  "user_notes",
+  "google_books_description",
+  "categories",
+  "table_of_contents",
+];
+
 function normalizeExtractedConcept(concept: ExtractedConcept): ExtractedConcept {
   return {
     ...concept,
@@ -283,6 +331,9 @@ function normalizeExtractedConcept(concept: ExtractedConcept): ExtractedConcept 
     conceptLevel: CONCEPT_LEVELS.includes(concept.conceptLevel) ? concept.conceptLevel : "supporting",
     conceptType: CONCEPT_TYPES.includes(concept.conceptType) ? concept.conceptType : "theme",
     specificity: SPECIFICITY_LEVELS.includes(concept.specificity) ? concept.specificity : "domain_specific",
+    sourceEvidence: concept.sourceEvidence && SOURCE_TYPES.includes(concept.sourceEvidence.sourceType)
+      ? { sourceType: concept.sourceEvidence.sourceType, evidenceText: concept.sourceEvidence.evidenceText?.trim() ?? "" }
+      : { sourceType: "google_books_description", evidenceText: "" },
   };
 }
 
