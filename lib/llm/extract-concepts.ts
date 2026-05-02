@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { CONCEPT_DOMAINS, type ConceptDomain } from "@/lib/domains";
 
 const client = new OpenAI();
 
@@ -8,7 +9,7 @@ export interface ExtractedConcept {
   description: string;
   importance: 1 | 2 | 3 | 4 | 5;
   excerpt: string;
-  domain: "cybersec" | "finance" | "law" | "cs" | "math" | "general";
+  domain: ConceptDomain;
 }
 
 const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
@@ -50,8 +51,9 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
               },
               domain: {
                 type: "string",
-                enum: ["cybersec", "finance", "law", "cs", "math", "general"],
-                description: "Primary knowledge domain",
+                enum: CONCEPT_DOMAINS,
+                description:
+                  "Primary knowledge domain. Prefer a specific domain; use general only when no other domain fits.",
               },
             },
             required: ["name", "nameJa", "description", "importance", "excerpt", "domain"],
@@ -93,7 +95,24 @@ Naming rules:
 - name: always in English, short (1-6 words), no domain prefixes (not "Security: TLS" just "TLS")
 - nameJa: natural Japanese translation of the concept name
 - If the source uses Japanese katakana for an English loanword, use the original English as name and put the katakana/Japanese form in nameJa
-- Preserve famous named ideas when the book is known for them, such as "Be Proactive", "Circle of Influence", or "Think Win-Win".`,
+- Preserve famous named ideas when the book is known for them, such as "Be Proactive", "Circle of Influence", or "Think Win-Win".
+
+Domain classification rules:
+- thinking: thinking methods, mental models, creativity, framing, abstraction, idea generation
+- self_management: habits, emotion regulation, anxiety, motivation, resilience, life management
+- communication: listening, persuasion, dialogue, negotiation, relationships, influence
+- decision_making: prioritization, tradeoffs, choices, judgment, planning, risk decisions
+- mindfulness: awareness, meditation, presence, acceptance, non-judgmental observation
+- ethics: virtues, morality, responsibility, fairness, values, character
+- critical_thinking: skepticism, bias detection, misinformation, evidence evaluation, logical scrutiny
+- productivity: execution, time management, workflow, focus, task systems
+- learning: study, reflection, skill acquisition, memory, deliberate practice, experiential learning
+- psychology: cognitive/emotional mechanisms, personality, behavioral patterns, therapy concepts
+- business: organizations, leadership, strategy, management, marketing, entrepreneurship
+- cybersec / finance / law / cs / math: use for clearly technical concepts in those fields
+- general: last resort only. Avoid using general when a more specific domain above applies.
+
+Avoid assigning more than 20% of concepts to general unless the book truly spans unrelated topics.`,
       },
       {
         role: "user",

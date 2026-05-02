@@ -13,21 +13,12 @@ import { toast } from "sonner";
 import Link from "next/link";
 import type { Book } from "@/lib/db/schema";
 import { RELATION_LABELS, relationLabel } from "@/lib/relations";
+import { DOMAIN_LABELS, domainLabel } from "@/lib/domains";
 
 const CytoscapeView = dynamic(() => import("@/components/graph/CytoscapeView"), {
   ssr: false,
   loading: () => <Skeleton className="w-full h-full" />,
 });
-
-const DOMAIN_LABELS: Record<string, string> = {
-  all: "全ドメイン",
-  cybersec: "セキュリティ",
-  finance: "金融",
-  law: "法学",
-  cs: "CS",
-  math: "数学",
-  general: "一般",
-};
 
 interface GraphNode {
   id: number;
@@ -476,7 +467,7 @@ function MapContent() {
                 </button>
               </div>
               <Badge variant="secondary" className="text-xs mt-1">
-                {DOMAIN_LABELS[selected.concept.domain] ?? selected.concept.domain}
+                {domainLabel(selected.concept.domain)}
               </Badge>
               {selected.concept.description && (
                 <p className="text-sm mt-2 text-muted-foreground">{selected.concept.description}</p>

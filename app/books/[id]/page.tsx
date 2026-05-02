@@ -10,6 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { ArrowLeft, Play, Trash2, Brain } from "lucide-react";
 import type { Book } from "@/lib/db/schema";
+import { domainBadgeClass } from "@/lib/domains";
 
 interface ConceptRow {
   id: number;
@@ -20,15 +21,6 @@ interface ConceptRow {
   importance: number;
   excerpt: string | null;
 }
-
-const DOMAIN_COLOR: Record<string, string> = {
-  cybersec: "bg-red-100 text-red-800",
-  finance: "bg-green-100 text-green-800",
-  law: "bg-blue-100 text-blue-800",
-  cs: "bg-purple-100 text-purple-800",
-  math: "bg-yellow-100 text-yellow-800",
-  general: "bg-gray-100 text-gray-800",
-};
 
 export default function BookDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -145,9 +137,7 @@ export default function BookDetailPage() {
                   <div key={c.id}>
                     <div className="flex items-start gap-2">
                       <span
-                        className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                          DOMAIN_COLOR[c.conceptDomain] ?? DOMAIN_COLOR.general
-                        }`}
+                        className={`text-xs px-1.5 py-0.5 rounded font-medium ${domainBadgeClass(c.conceptDomain)}`}
                       >
                         {c.conceptDomain}
                       </span>

@@ -3,15 +3,7 @@
 import { useEffect, useRef, useCallback } from "react";
 import type cytoscape from "cytoscape";
 import { relationColor, relationLineStyle } from "@/lib/relations";
-
-const DOMAIN_COLORS: Record<string, string> = {
-  cybersec: "#ef4444",
-  finance: "#22c55e",
-  law: "#3b82f6",
-  cs: "#a855f7",
-  math: "#eab308",
-  general: "#6b7280",
-};
+import { domainColor } from "@/lib/domains";
 
 interface Node {
   id: number;
@@ -114,8 +106,7 @@ export default function CytoscapeView({
             selector: "node",
             style: {
               label: "data(label)",
-              "background-color": (ele: cytoscape.NodeSingular) =>
-                DOMAIN_COLORS[ele.data("domain")] ?? DOMAIN_COLORS.general,
+              "background-color": (ele: cytoscape.NodeSingular) => domainColor(ele.data("domain")),
               width: (ele: cytoscape.NodeSingular) => 20 + (ele.data("bookCount") ?? 1) * 8,
               height: (ele: cytoscape.NodeSingular) => 20 + (ele.data("bookCount") ?? 1) * 8,
               "font-size": "10px",
