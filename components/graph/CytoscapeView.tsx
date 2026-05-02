@@ -31,6 +31,7 @@ interface Props {
   onSelectionChange?: (nodeIds: number[]) => void;
   lang?: "en" | "ja";
   selectedBookIds?: number[];
+  selectionMode?: boolean;
 }
 
 export default function CytoscapeView({
@@ -41,13 +42,16 @@ export default function CytoscapeView({
   onSelectionChange,
   lang = "ja",
   selectedBookIds = [],
+  selectionMode = false,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const onNodeClickRef = useRef(onNodeClick);
   const onSelectionChangeRef = useRef(onSelectionChange);
+  const selectionModeRef = useRef(selectionMode);
   useEffect(() => { onNodeClickRef.current = onNodeClick; }, [onNodeClick]);
   useEffect(() => { onSelectionChangeRef.current = onSelectionChange; }, [onSelectionChange]);
+  useEffect(() => { selectionModeRef.current = selectionMode; }, [selectionMode]);
 
   const buildElements = useCallback(() => {
     return [
@@ -200,12 +204,20 @@ export default function CytoscapeView({
           numIter: 2500,
         } as cytoscape.LayoutOptions,
         wheelSensitivity: 0.3,
-        boxSelectionEnabled: true,
+        boxSelectionEnabled: selectionModeRef.current,
         selectionType: "additive",
       });
 
+      cy.userPanningEnabled(!selectionModeRef.current);
+      cy.nodes().ungrabify();
+
       const selectNode = (e: cytoscape.EventObject) => {
         const nodeId = Number(e.target.id());
+        if (selectionModeRef.current) {
+          const node = e.target as cytoscape.NodeSingular;
+          node.select();
+          return;
+        }
         onNodeClickRef.current?.(nodeId);
       };
 
@@ -218,8 +230,10 @@ export default function CytoscapeView({
       cy.on("select unselect", "node", syncSelection);
       cy.on("tap", (e) => {
         if (e.target !== cy) return;
-        cy.nodes().unselect();
-        onSelectionChangeRef.current?.([]);
+        if (selectionModeRef.current) {
+          cy.nodes().unselect();
+          onSelectionChangeRef.current?.([]);
+        }
       });
 
       cyRef.current = cy;
@@ -232,6 +246,20 @@ export default function CytoscapeView({
       cyRef.current = null;
     };
   }, [nodes, edges, lang]);
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+
+    cy.boxSelectionEnabled(selectionMode);
+    cy.userPanningEnabled(!selectionMode);
+    cy.nodes().ungrabify();
+
+    if (!selectionMode) {
+      cy.nodes().unselect();
+      onSelectionChangeRef.current?.([]);
+    }
+  }, [selectionMode]);
 
   // Highlight node without re-building the graph
   useEffect(() => {

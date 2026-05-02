@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { BookOpen, ChevronDown, ExternalLink, Sparkles, X } from "lucide-react";
+import { BookOpen, ChevronDown, ExternalLink, MousePointer2, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 import type { Book } from "@/lib/db/schema";
@@ -74,6 +74,7 @@ function MapContent() {
   const [selectedLoading, setSelectedLoading] = useState(false);
   const [selectedError, setSelectedError] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<number[]>([]);
+  const [selectionMode, setSelectionMode] = useState(false);
   const [insight, setInsight] = useState<MapInsight | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
   const [insightError, setInsightError] = useState<string | null>(null);
@@ -296,6 +297,17 @@ function MapContent() {
             </button>
           </div>
 
+          <Button
+            type="button"
+            size="sm"
+            variant={selectionMode ? "default" : "outline"}
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setSelectionMode((enabled) => !enabled)}
+          >
+            <MousePointer2 className="h-3.5 w-3.5" />
+            選択
+          </Button>
+
           {selectedBooks.length > 0 && (
             <div className="flex max-w-full flex-wrap items-center gap-1.5">
               {selectedBooks.slice(0, 4).map((book) => (
@@ -319,6 +331,12 @@ function MapContent() {
             </div>
           )}
         </div>
+
+        {selectionMode && (
+          <div className="absolute top-16 left-3 z-10 rounded-md border bg-background/90 px-3 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur">
+            ドラッグ範囲にかかったドットを選択します。クリックでも追加できます。
+          </div>
+        )}
 
         {/* Legend */}
         <div className="absolute bottom-3 right-3 z-10 max-h-[46vh] w-52 overflow-y-auto bg-background/90 backdrop-blur rounded-lg p-2 shadow-sm border text-xs space-y-3">
@@ -368,6 +386,7 @@ function MapContent() {
             onSelectionChange={handleSelectionChange}
             lang={lang}
             selectedBookIds={selectedBookIds}
+            selectionMode={selectionMode}
           />
         )}
       </div>
