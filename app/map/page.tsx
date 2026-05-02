@@ -816,8 +816,8 @@ function MapContent() {
                       return (
                         <div
                           key={r.id}
-                          className={`rounded-md border p-2 text-xs ${
-                            isCrossBook ? "border-slate-300 bg-slate-50/70" : "hover:bg-muted/50"
+                          className={`rounded-md border p-2 text-xs hover:bg-muted/50 transition-colors ${
+                            isCrossBook ? "border-primary/40" : ""
                           }`}
                         >
                           <button

@@ -136,8 +136,11 @@ export default function CytoscapeView({
               "text-halign": "center",
               "text-margin-y": 4,
               color: "#374151",
-              "text-outline-width": 2,
-              "text-outline-color": "#ffffff",
+              "text-outline-width": 0,
+              "text-background-color": "#ffffff",
+              "text-background-opacity": 0.88,
+              "text-background-padding": "2px",
+              "text-background-shape": "roundrectangle",
             },
           },
           {
