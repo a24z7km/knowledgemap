@@ -66,10 +66,11 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
 export async function extractConcepts(
   title: string,
   author: string,
-  notes: string
+  notes: string,
+  model = "gpt-4o-mini"
 ): Promise<ExtractedConcept[]> {
   const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model,
     max_tokens: 4096,
     tools: [CONCEPT_TOOL],
     tool_choice: { type: "function", function: { name: "save_concepts" } },

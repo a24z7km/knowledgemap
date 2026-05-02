@@ -5,21 +5,21 @@ import { eq, and } from "drizzle-orm";
 import { extractConcepts } from "@/lib/llm/extract-concepts";
 import { extractRelations } from "@/lib/llm/extract-relations";
 
-export async function POST(_req: Request, { params }: { params: Promise<{ bookId: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ bookId: string }> }) {
   const { bookId } = await params;
+  const body = await req.json().catch(() => ({}));
+  const model: string = body.model ?? "gpt-4o-mini";
   const db = getDb();
 
   const [book] = await db.select().from(books).where(eq(books.id, Number(bookId)));
   if (!book) return NextResponse.json({ error: "Book not found" }, { status: 404 });
 
-  // Mark as analyzing
   await db
     .update(books)
     .set({ analyzeStatus: "analyzing", analyzeError: null })
     .where(eq(books.id, book.id));
 
-  // Run async (fire-and-forget) so the API returns quickly
-  runAnalysis(book.id, book.title, book.author, book.notes ?? "").catch(() => {});
+  runAnalysis(book.id, book.title, book.author, book.notes ?? "", model).catch(() => {});
 
   return NextResponse.json({ status: "started" });
 }
@@ -43,7 +43,7 @@ async function fetchGoogleBooksDescription(title: string, author: string): Promi
   }
 }
 
-async function runAnalysis(bookId: number, title: string, author: string, notes: string) {
+async function runAnalysis(bookId: number, title: string, author: string, notes: string, model = "gpt-4o-mini") {
   const db = getDb();
   try {
     // Step 1: Clean up previous analysis data for this book
@@ -68,7 +68,7 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     const enrichedNotes = [notes, googleDesc].filter(Boolean).join("\n\n");
 
     // Step 3: Extract concepts
-    const extracted = await extractConcepts(title, author, enrichedNotes);
+    const extracted = await extractConcepts(title, author, enrichedNotes, model);
 
     // Step 2: Normalize + upsert concepts
     const conceptIds: Record<string, number> = {};
@@ -115,7 +115,7 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     // Step 3: Extract relations (delete old ones for this book first to reflect re-analysis)
     await db.delete(conceptRelations).where(eq(conceptRelations.bookId, bookId));
 
-    const relations = await extractRelations(title, extracted);
+    const relations = await extractRelations(title, extracted, model);
     for (const rel of relations) {
       const fromId = conceptIds[rel.from];
       const toId = conceptIds[rel.to];

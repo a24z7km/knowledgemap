@@ -54,6 +54,9 @@ export default function BooksPage() {
   const [csvRows, setCsvRows] = useState<typeof EMPTY_FORM[]>([]);
   const [csvImporting, setCsvImporting] = useState(false);
 
+  // Model selection
+  const [model, setModel] = useState("gpt-4o-mini");
+
   const load = () =>
     fetch("/api/books")
       .then((r) => r.json())
@@ -193,9 +196,13 @@ export default function BooksPage() {
 
   // ── Analyze / Delete ───────────────────────────────────────────
   const analyze = async (book: Book) => {
-    const res = await fetch(`/api/analyze/${book.id}`, { method: "POST" });
+    const res = await fetch(`/api/analyze/${book.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
     if (res.ok) {
-      toast.info(`「${book.title}」の解析を開始しました`);
+      toast.info(`「${book.title}」の解析を開始しました（${model}）`);
       load();
     }
   };
@@ -209,8 +216,20 @@ export default function BooksPage() {
 
   return (
     <div className="max-w-screen-xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">本一覧</h1>
+        <div className="flex items-center gap-2 ml-auto">
+          <Select value={model} onValueChange={(v) => setModel(v ?? "gpt-4o-mini")}>
+            <SelectTrigger className="w-40 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="gpt-4o-mini">gpt-4o-mini（安い）</SelectItem>
+              <SelectItem value="gpt-4o">gpt-4o（高精度）</SelectItem>
+              <SelectItem value="o1-mini">o1-mini（推論）</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetDialog(); }}>
           <DialogTrigger render={<Button size="sm" />}>
             <Plus className="w-4 h-4 mr-1" /> 本を追加

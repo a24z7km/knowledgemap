@@ -45,12 +45,13 @@ const RELATION_TOOL: OpenAI.ChatCompletionTool = {
 
 export async function extractRelations(
   title: string,
-  concepts: ExtractedConcept[]
+  concepts: ExtractedConcept[],
+  model = "gpt-4o-mini"
 ): Promise<ExtractedRelation[]> {
   const conceptList = concepts.map((c) => `- ${c.name} (${c.domain}): ${c.description}`).join("\n");
 
   const response = await client.chat.completions.create({
-    model: "gpt-4o-mini",
+    model,
     max_tokens: 4096,
     tools: [RELATION_TOOL],
     tool_choice: { type: "function", function: { name: "save_relations" } },
