@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { BookOpen, ChevronDown, ExternalLink, MousePointer2, Sparkles, X } from "lucide-react";
+import { BookOpen, ChevronDown, ExternalLink, MousePointer2, SendHorizontal, Sparkles, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import Link from "next/link";
 import type { Book } from "@/lib/db/schema";
@@ -107,9 +108,14 @@ function MapContent() {
   const [selectedError, setSelectedError] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<number[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [insightModel, setInsightModel] = useState("gpt-4o-mini");
   const [insight, setInsight] = useState<MapInsight | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
   const [insightError, setInsightError] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; content: string }[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
   const [lang, setLang] = useState<"en" | "ja">("ja");
   const [highlightId, setHighlightId] = useState<number | null>(
     highlightParam ? Number(highlightParam) : null
@@ -188,27 +194,30 @@ function MapContent() {
     setSelectedNodeIds(nodeIds);
     setInsight(null);
     setInsightError(null);
+    setChatMessages([]);
   }, []);
 
   const clearSelectionSummary = useCallback(() => {
     setSelectedNodeIds([]);
     setInsight(null);
     setInsightError(null);
+    setChatMessages([]);
   }, []);
 
+  const activeConceptIds = selectedNodeIds.length > 0 ? selectedNodeIds : highlightId != null ? [highlightId] : [];
+
   const summarizeSelection = useCallback(() => {
-    const conceptIds = selectedNodeIds.length > 0 ? selectedNodeIds : highlightId != null ? [highlightId] : [];
-    if (conceptIds.length === 0) {
+    if (activeConceptIds.length === 0) {
       toast.error("要約する概念を選択してください");
       return;
     }
-
     setInsightLoading(true);
     setInsightError(null);
+    setChatMessages([]);
     fetch("/api/map/insights", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conceptIds }),
+      body: JSON.stringify({ conceptIds: activeConceptIds, model: insightModel }),
     })
       .then((r) => {
         if (!r.ok) throw new Error("概要を生成できませんでした");
@@ -221,7 +230,33 @@ function MapContent() {
         toast.error(message);
       })
       .finally(() => setInsightLoading(false));
-  }, [highlightId, selectedNodeIds]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightId, selectedNodeIds, insightModel]);
+
+  const sendChat = useCallback(() => {
+    const trimmed = chatInput.trim();
+    if (!trimmed || chatLoading || activeConceptIds.length === 0) return;
+    const next: { role: "user" | "assistant"; content: string }[] = [...chatMessages, { role: "user", content: trimmed }];
+    setChatMessages(next);
+    setChatInput("");
+    setChatLoading(true);
+    fetch("/api/map/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: next, conceptIds: activeConceptIds, model: insightModel }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error("返答を取得できませんでした");
+        return r.json();
+      })
+      .then((data: { message: string }) => {
+        setChatMessages((prev) => [...prev, { role: "assistant", content: data.message }]);
+        setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+      })
+      .catch((err) => toast.error(err instanceof Error ? err.message : "エラーが発生しました"))
+      .finally(() => setChatLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatInput, chatLoading, chatMessages, activeConceptIds, insightModel]);
 
   const analyzedBooks = useMemo(() => books.filter((b) => b.analyzeStatus === "done"), [books]);
   const analyzedBookIds = useMemo(() => analyzedBooks.map((book) => book.id), [analyzedBooks]);
@@ -633,13 +668,28 @@ function MapContent() {
             <Button
               size="sm"
               onClick={summarizeSelection}
-              disabled={insightLoading || (selectedNodeIds.length === 0 && highlightId == null)}
+              disabled={insightLoading || activeConceptIds.length === 0}
               className="h-8 gap-1.5"
             >
               <Sparkles className="h-3.5 w-3.5" />
               要約
             </Button>
           </div>
+
+          {/* モデル選択 */}
+          <Select value={insightModel} onValueChange={(v) => setInsightModel(v ?? "gpt-4o-mini")}>
+            <SelectTrigger className="h-7 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="gpt-4o-mini">gpt-4o-mini　〜0.05円/回</SelectItem>
+              <SelectItem value="gpt-4.1-mini">gpt-4.1-mini　〜0.1円/回</SelectItem>
+              <SelectItem value="o4-mini">o4-mini　〜0.3円/回</SelectItem>
+              <SelectItem value="gpt-4.1">gpt-4.1　〜0.6円/回</SelectItem>
+              <SelectItem value="gpt-4o">gpt-4o　〜0.7円/回</SelectItem>
+              <SelectItem value="o3">o3　〜5円/回</SelectItem>
+            </SelectContent>
+          </Select>
 
           {insightLoading && (
             <div className="space-y-2">
@@ -700,6 +750,45 @@ function MapContent() {
                   </div>
                 </div>
               )}
+
+              {/* チャット */}
+              <Separator />
+              <div className="space-y-2">
+                <p className="text-xs font-medium">この概念について質問する</p>
+                {chatMessages.length > 0 && (
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {chatMessages.map((msg, i) => (
+                      <div
+                        key={i}
+                        className={`rounded-md px-2.5 py-1.5 text-xs whitespace-pre-wrap ${
+                          msg.role === "user"
+                            ? "bg-primary text-primary-foreground ml-4"
+                            : "bg-muted text-muted-foreground mr-4"
+                        }`}
+                      >
+                        {msg.content}
+                      </div>
+                    ))}
+                    {chatLoading && <Skeleton className="h-8 w-full mr-4" />}
+                    <div ref={chatBottomRef} />
+                  </div>
+                )}
+                <form
+                  onSubmit={(e) => { e.preventDefault(); sendChat(); }}
+                  className="flex gap-1.5"
+                >
+                  <Input
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="質問を入力..."
+                    className="h-7 text-xs"
+                    disabled={chatLoading}
+                  />
+                  <Button type="submit" size="icon" className="h-7 w-7 shrink-0" disabled={chatLoading || !chatInput.trim()}>
+                    <SendHorizontal className="h-3.5 w-3.5" />
+                  </Button>
+                </form>
+              </div>
             </div>
           )}
         </div>
