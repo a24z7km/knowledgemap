@@ -21,6 +21,12 @@ export default function Navigation() {
           <Link
             key={href}
             href={href}
+            onClick={(e) => {
+              if (pathname === href) {
+                e.preventDefault();
+                window.location.href = href;
+              }
+            }}
             className={cn(
               "flex items-center gap-1.5 text-sm font-medium transition-colors hover:text-foreground",
               pathname === href ? "text-foreground" : "text-muted-foreground"
