@@ -144,7 +144,6 @@ function MapContent() {
   const handleNodeClick = useCallback((nodeId: number) => {
     if (pendingNodeIdRef.current === nodeId) return;
     pendingNodeIdRef.current = nodeId;
-    setCenterNodeId(nodeId);
     setHighlightId(nodeId);
     setInsightError(null);
     setSelectedLoading(true);
@@ -175,6 +174,12 @@ function MapContent() {
 
   const handleSelectionChange = useCallback((nodeIds: number[]) => {
     setSelectedNodeIds(nodeIds);
+    setInsight(null);
+    setInsightError(null);
+  }, []);
+
+  const clearSelectionSummary = useCallback(() => {
+    setSelectedNodeIds([]);
     setInsight(null);
     setInsightError(null);
   }, []);
@@ -234,12 +239,13 @@ function MapContent() {
   }, [centerNodeId, edges, nodes, pathFromId, pathToId, selectedBookIds, selectedRelationTypes, viewMode]);
 
   const toggleBook = useCallback((bookId: number) => {
+    clearSelectionSummary();
     setSelectedBookIds((current) =>
       current.includes(bookId)
         ? current.filter((id) => id !== bookId)
         : [...current, bookId]
     );
-  }, []);
+  }, [clearSelectionSummary]);
 
   useEffect(() => {
     if (highlightId != null && selected?.concept.id !== highlightId && !selectedLoading) {
@@ -264,7 +270,13 @@ function MapContent() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={viewMode} onValueChange={(v) => setViewMode((v ?? "one_hop") as ViewMode)}>
+          <Select
+            value={viewMode}
+            onValueChange={(v) => {
+              clearSelectionSummary();
+              setViewMode((v ?? "one_hop") as ViewMode);
+            }}
+          >
             <SelectTrigger className="w-32 h-8 text-xs">
               <SelectValue />
             </SelectTrigger>
@@ -278,7 +290,10 @@ function MapContent() {
           {(viewMode === "one_hop" || viewMode === "two_hop") && (
             <Select
               value={centerNodeId == null ? "none" : String(centerNodeId)}
-              onValueChange={(v) => setCenterNodeId(v === "none" ? null : Number(v))}
+              onValueChange={(v) => {
+                clearSelectionSummary();
+                setCenterNodeId(v === "none" ? null : Number(v));
+              }}
             >
               <SelectTrigger className="w-48 h-8 text-xs">
                 <span className="truncate text-left">
@@ -296,7 +311,13 @@ function MapContent() {
 
           {viewMode === "shortest_path" && (
             <>
-              <Select value={pathFromId == null ? "none" : String(pathFromId)} onValueChange={(v) => setPathFromId(v === "none" ? null : Number(v))}>
+              <Select
+                value={pathFromId == null ? "none" : String(pathFromId)}
+                onValueChange={(v) => {
+                  clearSelectionSummary();
+                  setPathFromId(v === "none" ? null : Number(v));
+                }}
+              >
                 <SelectTrigger className="w-44 h-8 text-xs">
                   <span className="truncate text-left">
                     {pathFromId == null ? "開始概念" : nodeById.get(pathFromId)?.name ?? "開始概念"}
@@ -309,7 +330,13 @@ function MapContent() {
                   ))}
                 </SelectContent>
               </Select>
-              <Select value={pathToId == null ? "none" : String(pathToId)} onValueChange={(v) => setPathToId(v === "none" ? null : Number(v))}>
+              <Select
+                value={pathToId == null ? "none" : String(pathToId)}
+                onValueChange={(v) => {
+                  clearSelectionSummary();
+                  setPathToId(v === "none" ? null : Number(v));
+                }}
+              >
                 <SelectTrigger className="w-44 h-8 text-xs">
                   <span className="truncate text-left">
                     {pathToId == null ? "到達概念" : nodeById.get(pathToId)?.name ?? "到達概念"}
@@ -333,6 +360,7 @@ function MapContent() {
                     type="checkbox"
                     checked={selectedRelationTypes.includes(type)}
                     onChange={() => {
+                      clearSelectionSummary();
                       setSelectedRelationTypes((current) =>
                         current.includes(type)
                           ? current.filter((item) => item !== type)
@@ -457,7 +485,7 @@ function MapContent() {
         </div>
 
         {selectionMode && (
-          <div className="absolute top-16 left-3 z-10 rounded-md border bg-background/90 px-3 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur">
+          <div className="absolute left-3 top-28 z-10 max-w-xs rounded-md border bg-background/95 px-3 py-2 text-xs text-muted-foreground shadow-sm backdrop-blur">
             ドラッグ範囲にかかったドットを選択します。クリックでも追加できます。
           </div>
         )}
@@ -638,6 +666,30 @@ function MapContent() {
               {selected.concept.description && (
                 <p className="text-sm mt-2 text-muted-foreground">{selected.concept.description}</p>
               )}
+              <div className="mt-3 flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 flex-1 text-xs"
+                  onClick={() => {
+                    setCenterNodeId(selected.concept.id);
+                    setViewMode("one_hop");
+                  }}
+                >
+                  1-hopで表示
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 flex-1 text-xs"
+                  onClick={() => {
+                    setCenterNodeId(selected.concept.id);
+                    setViewMode("two_hop");
+                  }}
+                >
+                  2-hopで表示
+                </Button>
+              </div>
             </div>
 
             <Separator />

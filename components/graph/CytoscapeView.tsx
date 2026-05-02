@@ -271,6 +271,8 @@ export default function CytoscapeView({
     const cy = cyRef.current;
     if (!cy) return;
 
+    cy.nodes().unselect();
+    onSelectionChangeRef.current?.([]);
     cy.boxSelectionEnabled(selectionMode);
     cy.userPanningEnabled(!selectionMode);
     if (selectionMode) {
@@ -279,10 +281,6 @@ export default function CytoscapeView({
       cy.nodes().grabify();
     }
 
-    if (!selectionMode) {
-      cy.nodes().unselect();
-      onSelectionChangeRef.current?.([]);
-    }
   }, [selectionMode]);
 
   // Highlight node without re-building the graph
