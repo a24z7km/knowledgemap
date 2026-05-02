@@ -184,7 +184,6 @@ export default function CytoscapeView({ nodes, edges, highlightId, onNodeClick, 
     cy.nodes().removeClass("highlighted");
     if (highlightId != null) {
       cy.getElementById(String(highlightId)).addClass("highlighted");
-      cy.animate({ fit: { eles: cy.getElementById(String(highlightId)), padding: 80 } } as Parameters<typeof cy.animate>[0], { duration: 400 });
     }
   }, [highlightId]);
 

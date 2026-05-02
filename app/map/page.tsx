@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { ExternalLink } from "lucide-react";
+import { toast } from "sonner";
 import Link from "next/link";
 import type { Book } from "@/lib/db/schema";
 
@@ -96,7 +97,11 @@ function MapContent() {
     setHighlightId(nodeId);
     fetch(`/api/concepts/${nodeId}`)
       .then((r) => r.json())
-      .then(setSelected);
+      .then((data) => {
+        if (data?.concept) setSelected(data);
+        else toast.error("概念の情報を取得できませんでした");
+      })
+      .catch(() => toast.error("通信エラーが発生しました"));
   };
 
   return (
