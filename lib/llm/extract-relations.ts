@@ -86,7 +86,24 @@ Create edges that represent meaningful knowledge dependencies and connections. E
 
   const input = JSON.parse(toolCall.function.arguments) as { relations: ExtractedRelation[] };
 
-  // Filter to only relations between known concept names
-  const names = new Set(concepts.map((c) => c.name));
-  return input.relations.filter((r) => names.has(r.from) && names.has(r.to));
+  // Build case-insensitive lookup: normalized name -> original name
+  const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, "");
+  const nameMap = new Map<string, string>();
+  for (const c of concepts) nameMap.set(normalize(c.name), c.name);
+
+  const resolved = input.relations.flatMap((r) => {
+    const from = nameMap.get(normalize(r.from));
+    const to = nameMap.get(normalize(r.to));
+    if (!from || !to || from === to) return [];
+    return [{ ...r, from, to }];
+  });
+
+  // Deduplicate
+  const seen = new Set<string>();
+  return resolved.filter((r) => {
+    const key = `${r.from}||${r.to}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
