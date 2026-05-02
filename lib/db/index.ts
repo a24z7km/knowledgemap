@@ -1,9 +1,9 @@
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
-import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import * as schema from "./schema";
 import path from "path";
 import fs from "fs";
+import { RELATION_TYPES } from "@/lib/relations";
 
 const DB_PATH = path.join(process.cwd(), "data", "app.db");
 
@@ -56,7 +56,7 @@ function getDb() {
       from_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
       to_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
       relation_type TEXT NOT NULL DEFAULT 'related'
-        CHECK(relation_type IN ('prerequisite','related','contradicts','extends','applies_to')),
+        CHECK(relation_type IN (${relationTypeSqlList()})),
       weight REAL NOT NULL DEFAULT 1.0,
       source TEXT NOT NULL DEFAULT 'llm' CHECK(source IN ('llm','manual')),
       evidence TEXT,
@@ -64,7 +64,71 @@ function getDb() {
     );
   `);
 
+  ensureRelationTypeConstraint(sqlite);
+
   return _db;
+}
+
+function relationTypeSqlList() {
+  return RELATION_TYPES.map((type) => `'${type}'`).join(",");
+}
+
+function ensureRelationTypeConstraint(sqlite: Database.Database) {
+  const table = sqlite
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'concept_relations'")
+    .get() as { sql?: string } | undefined;
+
+  if (table?.sql?.includes("same_family_as")) return;
+
+  sqlite.exec("PRAGMA foreign_keys = OFF");
+  const migrateRelationTypes = sqlite.transaction(() => {
+    sqlite.exec(`
+      CREATE TABLE concept_relations_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+        to_concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
+        relation_type TEXT NOT NULL DEFAULT 'related'
+          CHECK(relation_type IN (${relationTypeSqlList()})),
+        weight REAL NOT NULL DEFAULT 1.0,
+        source TEXT NOT NULL DEFAULT 'llm' CHECK(source IN ('llm','manual')),
+        evidence TEXT,
+        book_id INTEGER REFERENCES books(id) ON DELETE SET NULL
+      );
+
+      INSERT INTO concept_relations_new (
+        id,
+        from_concept_id,
+        to_concept_id,
+        relation_type,
+        weight,
+        source,
+        evidence,
+        book_id
+      )
+      SELECT
+        id,
+        from_concept_id,
+        to_concept_id,
+        CASE
+          WHEN relation_type IN (${relationTypeSqlList()}) THEN relation_type
+          ELSE 'related'
+        END,
+        weight,
+        source,
+        evidence,
+        book_id
+      FROM concept_relations;
+
+      DROP TABLE concept_relations;
+      ALTER TABLE concept_relations_new RENAME TO concept_relations;
+    `);
+  });
+
+  try {
+    migrateRelationTypes();
+  } finally {
+    sqlite.exec("PRAGMA foreign_keys = ON");
+  }
 }
 
 export { getDb };

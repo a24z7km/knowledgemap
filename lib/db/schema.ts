@@ -1,5 +1,6 @@
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
+import { RELATION_TYPES } from "@/lib/relations";
 
 export const books = sqliteTable("books", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -34,7 +35,7 @@ export const conceptRelations = sqliteTable("concept_relations", {
   fromConceptId: integer("from_concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
   toConceptId: integer("to_concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
   relationType: text("relation_type", {
-    enum: ["prerequisite", "related", "contradicts", "extends", "applies_to"],
+    enum: RELATION_TYPES,
   }).notNull().default("related"),
   weight: real("weight").notNull().default(1.0),
   source: text("source", { enum: ["llm", "manual"] }).notNull().default("llm"),

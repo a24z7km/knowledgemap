@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import type cytoscape from "cytoscape";
+import { relationColor, relationLineStyle } from "@/lib/relations";
 
 const DOMAIN_COLORS: Record<string, string> = {
   cybersec: "#ef4444",
@@ -10,14 +11,6 @@ const DOMAIN_COLORS: Record<string, string> = {
   cs: "#a855f7",
   math: "#eab308",
   general: "#6b7280",
-};
-
-const EDGE_STYLES: Record<string, { lineStyle: string; lineColor: string }> = {
-  prerequisite: { lineStyle: "solid", lineColor: "#f97316" },
-  related: { lineStyle: "solid", lineColor: "#94a3b8" },
-  contradicts: { lineStyle: "dashed", lineColor: "#ef4444" },
-  extends: { lineStyle: "solid", lineColor: "#8b5cf6" },
-  applies_to: { lineStyle: "dotted", lineColor: "#10b981" },
 };
 
 interface Node {
@@ -138,13 +131,10 @@ export default function CytoscapeView({
             selector: "edge",
             style: {
               width: (ele: cytoscape.EdgeSingular) => 1 + (ele.data("weight") ?? 1) * 0.5,
-              "line-color": (ele: cytoscape.EdgeSingular) =>
-                EDGE_STYLES[ele.data("relationType")]?.lineColor ?? "#94a3b8",
-              "line-style": (ele: cytoscape.EdgeSingular) =>
-                (EDGE_STYLES[ele.data("relationType")]?.lineStyle ?? "solid") as "solid" | "dashed" | "dotted",
+              "line-color": (ele: cytoscape.EdgeSingular) => relationColor(ele.data("relationType")),
+              "line-style": (ele: cytoscape.EdgeSingular) => relationLineStyle(ele.data("relationType")),
               "target-arrow-shape": "triangle",
-              "target-arrow-color": (ele: cytoscape.EdgeSingular) =>
-                EDGE_STYLES[ele.data("relationType")]?.lineColor ?? "#94a3b8",
+              "target-arrow-color": (ele: cytoscape.EdgeSingular) => relationColor(ele.data("relationType")),
               "curve-style": "bezier",
               opacity: 0.7,
             },

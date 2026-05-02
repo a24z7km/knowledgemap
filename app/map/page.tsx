@@ -12,6 +12,7 @@ import { BookOpen, ChevronDown, ExternalLink, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import Link from "next/link";
 import type { Book } from "@/lib/db/schema";
+import { RELATION_LABELS, relationLabel } from "@/lib/relations";
 
 const CytoscapeView = dynamic(() => import("@/components/graph/CytoscapeView"), {
   ssr: false,
@@ -26,14 +27,6 @@ const DOMAIN_LABELS: Record<string, string> = {
   cs: "CS",
   math: "数学",
   general: "一般",
-};
-
-const RELATION_LABELS: Record<string, { label: string; color: string; dash?: string }> = {
-  prerequisite: { label: "前提",  color: "#f97316" },
-  related:      { label: "関連",  color: "#94a3b8" },
-  contradicts:  { label: "対立",  color: "#ef4444", dash: "4 2" },
-  extends:      { label: "拡張",  color: "#8b5cf6" },
-  applies_to:   { label: "適用",  color: "#10b981", dash: "1 2" },
 };
 
 interface GraphNode {
@@ -530,7 +523,7 @@ function MapContent() {
                           className="w-full text-left text-xs hover:bg-muted rounded px-2 py-1 flex items-center gap-2"
                         >
                           <Badge variant="outline" className="text-xs shrink-0">
-                            {RELATION_LABELS[r.relationType]?.label ?? r.relationType}
+                            {relationLabel(r.relationType)}
                           </Badge>
                           <span className="truncate">{otherNode?.name ?? `#${otherId}`}</span>
                         </button>

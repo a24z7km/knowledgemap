@@ -1,16 +1,15 @@
 import OpenAI from "openai";
 import type { ExtractedConcept } from "./extract-concepts";
+import { isRelationType, RELATION_TYPES, type RelationType } from "@/lib/relations";
 
 const client = new OpenAI();
 
 export interface ExtractedRelation {
   from: string;
   to: string;
-  type: "prerequisite" | "related" | "contradicts" | "extends" | "applies_to";
+  type: RelationType;
   evidence: string;
 }
-
-type RelationType = ExtractedRelation["type"];
 
 function buildRelationTool(minItems: number, maxItems: number): OpenAI.ChatCompletionTool {
   return {
@@ -30,9 +29,9 @@ function buildRelationTool(minItems: number, maxItems: number): OpenAI.ChatCompl
                 to: { type: "string", description: "Target concept name (exact match from list)" },
                 type: {
                   type: "string",
-                  enum: ["prerequisite", "related", "contradicts", "extends", "applies_to"],
+                  enum: RELATION_TYPES,
                   description:
-                    "prerequisite: A must be understood before B; related: general connection; contradicts: opposing views; extends: B builds on A; applies_to: A is applied in context of B",
+                    "prerequisite: A must be understood before B; same_family_as: A and B are sibling concepts in the same family/framework; operationalizes: A turns B into a concrete practice/tool; supports: A provides evidence or reinforcement for B; contrasts_with: A and B illuminate a meaningful difference; contradicts: A and B conflict; extends: B builds on A; applies_to: A is applied in context of B; example_of: A is an example/instance of B; reframes: A changes how B is interpreted; mitigates: A reduces a risk/problem in B; related: only when no more specific type fits",
                 },
                 evidence: { type: "string", description: "Brief justification for this relationship" },
               },
@@ -71,15 +70,24 @@ export async function extractRelations(
 
 Relationship types:
 - prerequisite: understanding A is needed before B
-- related: general conceptual connection
-- contradicts: opposing or conflicting ideas
+- same_family_as: A and B are sibling concepts in the same framework, family, cluster, or argument
+- operationalizes: A turns B into a concrete practice, tool, habit, method, or workflow
+- supports: A provides evidence, reinforcement, motivation, or enabling conditions for B
+- contrasts_with: A and B are meaningfully different or opposed as a comparison, without direct contradiction
+- contradicts: A and B make opposing or conflicting claims
 - extends: B builds upon or specializes A
 - applies_to: A is a technique/tool applied in domain B
+- example_of: A is an example, instance, case, or manifestation of B
+- reframes: A changes the interpretation, lens, framing, or meaning of B
+- mitigates: A reduces, handles, or protects against a risk, bias, problem, or failure mode in B
+- related: last resort only when the relationship is useful but none of the above applies
 
 Create enough edges for a readable knowledge map:
 - Every important concept should connect to 2-4 other concepts when reasonable.
-- Use prerequisite, extends, and applies_to for directional relationships.
-- Use related for peer concepts that belong to the same argument, framework, practice, or problem.
+- Prefer the most specific relationship type. Use related only as the final fallback.
+- Use prerequisite, extends, applies_to, operationalizes, example_of, reframes, and mitigates for directional relationships.
+- Use same_family_as for peer concepts that belong to the same argument, framework, practice, or problem.
+- Use contrasts_with for distinctions and tradeoffs that are not strict contradictions.
 - Connect frameworks to their component principles, habits, practices, and underlying mental models.
 - Connect practical methods to the concepts they apply or operationalize.
 - Avoid self-loops and duplicate from/to pairs.
@@ -112,7 +120,7 @@ Return ${minRelations}-${maxRelations} relationships. Prefer a connected graph o
     const from = nameMap.get(normalize(r.from));
     const to = nameMap.get(normalize(r.to));
     if (!from || !to || from === to) return [];
-    return [{ ...r, from, to }];
+    return [{ ...r, from, to, type: isRelationType(r.type) ? r.type : "related" }];
   });
 
   // Deduplicate
@@ -145,7 +153,7 @@ Return ${minRelations}-${maxRelations} relationships. Prefer a connected graph o
       addRelation(
         concept.name,
         candidate.name,
-        "related",
+        "same_family_as",
         "Both concepts are important in the same domain for this book."
       );
       if (deduped.length + fallbackRelations.length >= minRelations) {
@@ -159,7 +167,7 @@ Return ${minRelations}-${maxRelations} relationships. Prefer a connected graph o
       rankedConcepts[i].name,
       rankedConcepts[i + 1].name,
       "related",
-      "Both concepts appear as important ideas in this book."
+      "Both concepts appear as important ideas in this book, but no more specific relationship was inferred."
     );
     if (deduped.length + fallbackRelations.length >= minRelations) break;
   }
