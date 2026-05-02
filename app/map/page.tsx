@@ -784,8 +784,8 @@ function MapContent() {
                       </span>
                     </div>
                     <div className="flex flex-wrap gap-1">
-                      {conceptMetadataLabels(a).map((label) => (
-                        <Badge key={label} variant="outline" className="text-xs">
+                      {conceptMetadataLabels(a).map((label, i) => (
+                        <Badge key={i} variant="outline" className="text-xs">
                           {label}
                         </Badge>
                       ))}
