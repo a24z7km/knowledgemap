@@ -1,7 +1,6 @@
 import OpenAI from "openai";
 import { isRelationType, RELATION_TYPES, type RelationType } from "@/lib/relations";
-
-const client = new OpenAI();
+import { chatWithRetry } from "./openai-client";
 
 export interface CrossBookConcept {
   id: number;
@@ -89,7 +88,7 @@ export async function extractCrossBookRelations({
   if (newConcepts.length === 0 || existingConcepts.length === 0) return [];
 
   const maxRelations = Math.min(newConcepts.length * 3, 60);
-  const response = await client.chat.completions.create({
+  const response = await chatWithRetry({
     model,
     max_completion_tokens: 8192,
     tools: [buildCrossBookRelationTool(maxRelations)],

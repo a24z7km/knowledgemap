@@ -1,8 +1,7 @@
 import OpenAI from "openai";
 import type { ExtractedConcept } from "./extract-concepts";
 import { isRelationType, RELATION_TYPES, type RelationType } from "@/lib/relations";
-
-const client = new OpenAI();
+import { chatWithRetry } from "./openai-client";
 
 export interface ExtractedRelation {
   from: string;
@@ -58,7 +57,7 @@ export async function extractRelations(
     .map((c) => `- ${c.name} (${c.domain}, importance ${c.importance}/5): ${c.description}`)
     .join("\n");
 
-  const response = await client.chat.completions.create({
+  const response = await chatWithRetry({
     model,
     max_completion_tokens: 8192,
     tools: [buildRelationTool(minRelations, maxRelations)],

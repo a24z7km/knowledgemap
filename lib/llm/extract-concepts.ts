@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import { CONCEPT_DOMAINS, type ConceptDomain } from "@/lib/domains";
 import type { ConceptCandidate } from "./generate-concept-candidates";
 import {
@@ -9,8 +8,8 @@ import {
   type ConceptType,
   type Specificity,
 } from "@/lib/concept-metadata";
-
-const client = new OpenAI();
+import OpenAI from "openai";
+import { chatWithRetry } from "./openai-client";
 
 export type SourceType =
   | "title"
@@ -169,7 +168,7 @@ export async function extractConcepts(
           .join("\n")
       : "";
 
-  const response = await client.chat.completions.create({
+  const response = await chatWithRetry({
     model,
     max_completion_tokens: 4096,
     tools: [CONCEPT_TOOL],
