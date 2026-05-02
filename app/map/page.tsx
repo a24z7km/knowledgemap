@@ -281,7 +281,9 @@ function MapContent() {
               onValueChange={(v) => setCenterNodeId(v === "none" ? null : Number(v))}
             >
               <SelectTrigger className="w-48 h-8 text-xs">
-                <SelectValue placeholder="中心概念" />
+                <span className="truncate text-left">
+                  {centerNodeId == null ? "中心概念を選択" : nodeById.get(centerNodeId)?.name ?? "中心概念を選択"}
+                </span>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">中心概念を選択</SelectItem>
@@ -296,7 +298,9 @@ function MapContent() {
             <>
               <Select value={pathFromId == null ? "none" : String(pathFromId)} onValueChange={(v) => setPathFromId(v === "none" ? null : Number(v))}>
                 <SelectTrigger className="w-44 h-8 text-xs">
-                  <SelectValue placeholder="開始概念" />
+                  <span className="truncate text-left">
+                    {pathFromId == null ? "開始概念" : nodeById.get(pathFromId)?.name ?? "開始概念"}
+                  </span>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">開始概念</SelectItem>
@@ -307,7 +311,9 @@ function MapContent() {
               </Select>
               <Select value={pathToId == null ? "none" : String(pathToId)} onValueChange={(v) => setPathToId(v === "none" ? null : Number(v))}>
                 <SelectTrigger className="w-44 h-8 text-xs">
-                  <SelectValue placeholder="到達概念" />
+                  <span className="truncate text-left">
+                    {pathToId == null ? "到達概念" : nodeById.get(pathToId)?.name ?? "到達概念"}
+                  </span>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">到達概念</SelectItem>
