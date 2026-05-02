@@ -70,6 +70,7 @@ const VIEW_MODE_LABELS: Record<ViewMode, string> = {
   relation_type: "関係",
   cross_book: "横断",
 };
+const RELATION_TYPES = Object.keys(RELATION_LABELS);
 
 function MapContent() {
   const searchParams = useSearchParams();
@@ -211,8 +212,13 @@ function MapContent() {
       .finally(() => setInsightLoading(false));
   }, [highlightId, selectedNodeIds]);
 
-  const analyzedBooks = books.filter((b) => b.analyzeStatus === "done");
+  const analyzedBooks = useMemo(() => books.filter((b) => b.analyzeStatus === "done"), [books]);
+  const analyzedBookIds = useMemo(() => analyzedBooks.map((book) => book.id), [analyzedBooks]);
   const selectedBooks = analyzedBooks.filter((book) => selectedBookIds.includes(book.id));
+  const allAnalyzedBooksSelected =
+    analyzedBookIds.length > 0 &&
+    selectedBookIds.length === analyzedBookIds.length &&
+    analyzedBookIds.every((bookId) => selectedBookIds.includes(bookId));
   const highlightedNodeCount = selectedBookIds.length === 0
     ? 0
     : nodes.filter((node) => node.bookIds.some((bookId) => selectedBookIds.includes(bookId))).length;
@@ -244,6 +250,23 @@ function MapContent() {
       current.includes(bookId)
         ? current.filter((id) => id !== bookId)
         : [...current, bookId]
+    );
+  }, [clearSelectionSummary]);
+
+  const selectAllBooks = useCallback(() => {
+    clearSelectionSummary();
+    setSelectedBookIds(analyzedBookIds);
+  }, [analyzedBookIds, clearSelectionSummary]);
+
+  const clearSelectedBooks = useCallback(() => {
+    clearSelectionSummary();
+    setSelectedBookIds([]);
+  }, [clearSelectionSummary]);
+
+  const toggleAllRelationTypes = useCallback(() => {
+    clearSelectionSummary();
+    setSelectedRelationTypes((current) =>
+      current.length === RELATION_TYPES.length ? [] : RELATION_TYPES
     );
   }, [clearSelectionSummary]);
 
@@ -354,6 +377,15 @@ function MapContent() {
 
           {viewMode === "relation_type" && (
             <div className="flex max-w-80 flex-wrap gap-1 rounded-md border bg-background px-2 py-1">
+              <label className="flex h-6 items-center gap-1 text-xs font-medium">
+                <input
+                  type="checkbox"
+                  checked={selectedRelationTypes.length === RELATION_TYPES.length}
+                  onChange={toggleAllRelationTypes}
+                  className="h-3 w-3 accent-primary"
+                />
+                すべて
+              </label>
               {Object.entries(RELATION_LABELS).map(([type, { label }]) => (
                 <label key={type} className="flex h-6 items-center gap-1 text-xs">
                   <input
@@ -386,20 +418,24 @@ function MapContent() {
               <span className="flex min-w-0 items-center gap-1.5">
                 <BookOpen className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">
-                  {selectedBookIds.length > 0 ? `${selectedBookIds.length}冊を表示` : "本を選択"}
+                  {allAnalyzedBooksSelected
+                    ? "すべての本"
+                    : selectedBookIds.length > 0
+                      ? `${selectedBookIds.length}冊を表示`
+                      : "本を選択"}
                 </span>
               </span>
               <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             </Button>
 
             {bookPickerOpen && (
-              <div className="absolute left-0 top-9 z-20 w-72 rounded-lg border bg-popover p-2 shadow-md">
+              <div className="absolute left-0 top-9 z-20 w-72 rounded-lg border border-neutral-200 bg-white p-2 text-neutral-950 shadow-xl dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-50">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <p className="text-xs font-medium">本</p>
                   {selectedBookIds.length > 0 && (
                     <button
                       type="button"
-                      onClick={() => setSelectedBookIds([])}
+                      onClick={clearSelectedBooks}
                       className="text-xs text-muted-foreground hover:text-foreground"
                     >
                       解除
@@ -407,6 +443,26 @@ function MapContent() {
                   )}
                 </div>
                 <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+                  {analyzedBooks.length > 0 && (
+                    <label className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-xs font-medium hover:bg-muted">
+                      <input
+                        type="checkbox"
+                        checked={allAnalyzedBooksSelected}
+                        onChange={() => {
+                          if (allAnalyzedBooksSelected) {
+                            clearSelectedBooks();
+                          } else {
+                            selectAllBooks();
+                          }
+                        }}
+                        className="mt-0.5 h-3.5 w-3.5 accent-primary"
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate">すべての本</span>
+                        <span className="block truncate text-muted-foreground">{analyzedBooks.length}冊</span>
+                      </span>
+                    </label>
+                  )}
                   {analyzedBooks.map((book) => {
                     const checked = selectedBookIds.includes(book.id);
                     return (
