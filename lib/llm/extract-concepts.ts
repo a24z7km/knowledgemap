@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { CONCEPT_DOMAINS, type ConceptDomain } from "@/lib/domains";
+import type { ConceptCandidate } from "./generate-concept-candidates";
 import {
   CONCEPT_LEVELS,
   CONCEPT_TYPES,
@@ -157,8 +158,17 @@ export async function extractConcepts(
   title: string,
   author: string,
   notes: string,
-  model = "gpt-4o-mini"
+  model = "gpt-4o-mini",
+  candidates: ConceptCandidate[] = []
 ): Promise<ExtractedConcept[]> {
+  const candidateBlock =
+    candidates.length > 0
+      ? `\n\nPre-extracted concept candidates (${candidates.length} total, from TOC/subjects/user notes):\n` +
+        candidates
+          .map((c) => `- [${c.sourceType}] ${c.text}  (evidence: "${c.evidenceText}")`)
+          .join("\n")
+      : "";
+
   const response = await client.chat.completions.create({
     model,
     max_completion_tokens: 4096,
@@ -272,14 +282,21 @@ Author: ${author}
 
 Structured source material:
 ${notes || "(No source material provided. Return an empty list — do not invent concepts.)"}
+${candidateBlock}
 
 Extraction procedure:
-1. Read the source material carefully.
+${candidates.length > 0 ? `1. You have been given ${candidates.length} pre-extracted concept candidates from TOC, subjects, and user notes (see above).
+   - Process EVERY candidate: assign English name, nameJa, description, domain, conceptLevel, conceptType, specificity, and sourceEvidence.
+   - Filter out noise (marketing copy, structural labels like "Chapter", metadata like "ISBN", role labels like "著者").
+   - You may merge near-duplicates into one concept.
+2. After processing all valid candidates, add up to 20 additional concepts that are EXPLICITLY grounded in the source material (descriptions, subtitle, categories) but not already covered by the candidates.
+3. Do NOT add concepts from other books, prior analyses, or unrelated general knowledge.
+4. For each concept, set sourceEvidence: { sourceType: (which source field), evidenceText: (exact phrase from source) }.` : `1. Read the source material carefully.
 2. Identify the organizing axis: field, central topic, named theories, chapter structure, key terms.
 3. Extract concepts that are explicitly named in the source first (mark these book_specific if they appear verbatim, domain_specific if they are core domain terms implied by the source).
 4. When the source strongly identifies a specific domain (e.g. "脳内物質" → neuroscience; "microeconomics" → economics; "zero trust" → cybersecurity), decompose into the central sub-concepts of that domain and mark them domain_specific with the source phrase as evidenceText.
 5. Do not add concepts from other books, prior analyses, or unrelated general knowledge.
-6. For each concept, set sourceEvidence: { sourceType: (which source field), evidenceText: (the phrase from the source that grounds this concept) }.
+6. For each concept, set sourceEvidence: { sourceType: (which source field), evidenceText: (the phrase from the source that grounds this concept) }.`}
 
 Example: if subtitle says "脳内物質で仕事の精度と速度を上げる方法":
 - "Brain Chemicals" → book_specific (subtitle names it directly)
@@ -288,12 +305,18 @@ Example: if subtitle says "脳内物質で仕事の精度と速度を上げる�
 - "Work Performance" → domain_specific, evidenceText="仕事の精度と速度を上げる"
 NOT allowed: "Zero-Second Thinking", "Mindfulness", "Emotional Intelligence" (not grounded in this source)
 
+Noise to exclude (do NOT create concepts for these):
+- Marketing copy: "ベストセラー", "不朽の名著", "感動の書", "公式本"
+- Metadata: "著者", "訳者", "編者", "出版社", "ISBN", "発売日", "価格"
+- Structural labels: "第n章", "PART I", "はじめに", "おわりに", "索引", "参考文献"
+- Generic role/format labels: "改訂版", "文庫版", "内容紹介"
+
 Prefer specific domain terms over generic labels:
 - "Dopamine", "Serotonin", "Noradrenaline", "Working Memory" over only "Motivation" or "Focus"
 - "Opportunity Cost", "Demand Curve", "Marginal Utility" over only "Decision Making"
 - "Zero Trust", "Authentication", "Threat Modeling" over only "Risk Management"
 
-Return 10-60 concepts. Even with title/subtitle/description only, aim for 10-25 well-grounded concepts. Generic concepts must stay under 20%.`,
+Return ${candidates.length > 0 ? `at least ${Math.min(candidates.length, 8)} concepts (all valid candidates + extras)` : "10-60 concepts"}. Generic concepts must stay under 20%.`,
       },
     ],
   });

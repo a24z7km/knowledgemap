@@ -71,6 +71,7 @@ function getDb() {
   ensureRelationTypeConstraint(sqlite);
   ensureAnalyzeStatusConstraint(sqlite);
   ensureBookConceptMetadataColumns(sqlite);
+  ensureBookConceptSourceEvidenceColumns(sqlite);
   normalizeExistingConceptRelations(sqlite);
   ensureConceptRelationUniqueIndexes(sqlite);
 
@@ -123,6 +124,18 @@ function ensureBookConceptMetadataColumns(sqlite: Database.Database) {
       ADD COLUMN specificity TEXT NOT NULL DEFAULT 'domain_specific'
       CHECK(specificity IN (${specificitySqlList()}))
     `);
+  }
+}
+
+function ensureBookConceptSourceEvidenceColumns(sqlite: Database.Database) {
+  const columns = sqlite.prepare("PRAGMA table_info(book_concepts)").all() as { name: string }[];
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("source_evidence_type")) {
+    sqlite.exec(`ALTER TABLE book_concepts ADD COLUMN source_evidence_type TEXT`);
+  }
+  if (!columnNames.has("source_evidence_text")) {
+    sqlite.exec(`ALTER TABLE book_concepts ADD COLUMN source_evidence_text TEXT`);
   }
 }
 

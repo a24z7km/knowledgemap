@@ -32,6 +32,8 @@ export const bookConcepts = sqliteTable("book_concepts", {
   conceptLevel: text("concept_level", { enum: CONCEPT_LEVELS }).notNull().default("supporting"),
   conceptType: text("concept_type", { enum: CONCEPT_TYPES }).notNull().default("theme"),
   specificity: text("specificity", { enum: SPECIFICITY_LEVELS }).notNull().default("domain_specific"),
+  sourceEvidenceType: text("source_evidence_type"),
+  sourceEvidenceText: text("source_evidence_text"),
 });
 
 export const conceptRelations = sqliteTable("concept_relations", {

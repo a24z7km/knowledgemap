@@ -12,6 +12,7 @@ import {
 import { conceptLookupKeys, mergeAliases, parseAliases } from "@/lib/concepts/normalize";
 import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
 import { fetchBookMetadata } from "@/lib/metadata/fetch-book-metadata";
+import { generateConceptCandidates, tocLineCount } from "@/lib/llm/generate-concept-candidates";
 
 export async function POST(req: Request, { params }: { params: Promise<{ bookId: string }> }) {
   const { bookId } = await params;
@@ -57,8 +58,20 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     const bookMetadata = await fetchBookMetadata(title, author);
     const enrichedNotes = buildExtractionSource({ title, author, notes, bookMetadata });
 
-    // Step 3: Extract concepts
-    const extracted = await extractConcepts(title, author, enrichedNotes, model);
+    // Step 3: Pre-generate concept candidates from TOC / subjects / user notes
+    const allToc = bookMetadata.sources.flatMap((s) => s.tableOfContents);
+    const allSubjects = bookMetadata.sources.flatMap((s) => s.subjects);
+    const candidates = generateConceptCandidates({ toc: allToc, subjects: allSubjects, userNotes: notes });
+    const tocCount = tocLineCount(allToc);
+
+    // Step 4: Extract concepts (LLM enriches candidates rather than extracting freely)
+    const extracted = await extractConcepts(title, author, enrichedNotes, model, candidates);
+
+    // Step 5: Quality check
+    const qualityWarnings = checkConceptQuality(extracted, tocCount);
+    if (qualityWarnings.status === "failed") {
+      throw new Error(`Concept extraction quality check failed: ${qualityWarnings.warnings.join("; ")}`);
+    }
 
     // Step 4: Normalize + upsert concepts
     const existingConcepts = await db.select().from(concepts);
@@ -135,6 +148,8 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
           conceptLevel: ec.conceptLevel,
           conceptType: ec.conceptType,
           specificity: ec.specificity,
+          sourceEvidenceType: ec.sourceEvidence?.sourceType ?? null,
+          sourceEvidenceText: ec.sourceEvidence?.evidenceText ?? null,
         });
       }
     }
@@ -247,6 +262,39 @@ ${subjectParts.length > 0 ? subjectParts.join("\n") : "(No subjects found.)"}`);
   return parts.join("\n\n");
 }
 
+
+function checkConceptQuality(
+  extracted: Awaited<ReturnType<typeof extractConcepts>>,
+  tocCount: number
+): { status: "ok" | "warning" | "failed"; warnings: string[] } {
+  const warnings: string[] = [];
+
+  if (tocCount > 0 && extracted.length < tocCount * 0.5) {
+    warnings.push(
+      `TOC has ${tocCount} meaningful entries but only ${extracted.length} concepts were extracted (expected >= ${Math.ceil(tocCount * 0.5)})`
+    );
+  }
+
+  const personCount = extracted.filter((c) => c.conceptType === "person").length;
+  if (personCount / extracted.length > 0.3) {
+    warnings.push(`${personCount}/${extracted.length} concepts are persons (>30%)`);
+  }
+
+  const genericCount = extracted.filter((c) => c.specificity === "generic").length;
+  if (genericCount / extracted.length > 0.3) {
+    warnings.push(`${genericCount}/${extracted.length} concepts are generic (>30%)`);
+  }
+
+  const noEvidence = extracted.filter((c) => !c.sourceEvidence?.evidenceText).length;
+  if (noEvidence > 0) {
+    warnings.push(`${noEvidence} concepts have no sourceEvidence text`);
+  }
+
+  if (tocCount > 0 && extracted.length < tocCount * 0.5) {
+    return { status: "failed", warnings };
+  }
+  return { status: warnings.length > 0 ? "warning" : "ok", warnings };
+}
 
 async function buildCrossBookRelationContext(
   bookId: number,

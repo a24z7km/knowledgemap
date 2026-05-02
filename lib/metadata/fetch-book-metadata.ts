@@ -177,6 +177,49 @@ async function fetchNDL(title: string, author: string): Promise<MetadataSource |
   }
 }
 
+interface HanmotoEntry {
+  isbn?: string;
+  title?: string;
+  subtitle?: string;
+  author?: string;
+  publisher?: string;
+  pubdate?: string;
+  toc?: string;
+  description?: string;
+  keywords?: string;
+}
+
+async function fetchHanmoto(isbn: string): Promise<MetadataSource | null> {
+  try {
+    const res = await fetch(`https://api.hanmoto.com/books/isbn/${isbn}`, {
+      signal: AbortSignal.timeout(8000),
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as HanmotoEntry;
+
+    const tocLines = (data.toc ?? "")
+      .split(/[\n\r]+/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    const subjects = (data.keywords ?? "")
+      .split(/[,、，\s]+/)
+      .map((k) => k.trim())
+      .filter(Boolean);
+
+    return {
+      source: "版元ドットコム",
+      description: data.description ?? "",
+      tableOfContents: tocLines,
+      subjects,
+      sourceUrl: `https://www.hanmoto.com/bd/isbn/${isbn}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchBookMetadata(title: string, author: string): Promise<BookMetadata> {
   const [googleResult, ndlResult] = await Promise.allSettled([
     fetchGoogleBooks(title, author),
@@ -187,11 +230,18 @@ export async function fetchBookMetadata(title: string, author: string): Promise<
   const ndl = ndlResult.status === "fulfilled" ? ndlResult.value : null;
 
   const isbn = google?.meta.isbn ?? null;
-  const openBDResult = isbn ? await fetchOpenBD(isbn) : null;
+  const [openBDResult, hanmotoResult] = await Promise.allSettled([
+    isbn ? fetchOpenBD(isbn) : Promise.resolve(null),
+    isbn ? fetchHanmoto(isbn) : Promise.resolve(null),
+  ]);
+
+  const openBD = openBDResult.status === "fulfilled" ? openBDResult.value : null;
+  const hanmoto = hanmotoResult.status === "fulfilled" ? hanmotoResult.value : null;
 
   const sources: MetadataSource[] = [];
   if (google?.source) sources.push(google.source);
-  if (openBDResult) sources.push(openBDResult);
+  if (openBD) sources.push(openBD);
+  if (hanmoto) sources.push(hanmoto);
   if (ndl) sources.push(ndl);
 
   return {
