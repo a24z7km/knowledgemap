@@ -4,6 +4,7 @@ import { books, concepts, bookConcepts, conceptRelations } from "@/lib/db/schema
 import { eq, and } from "drizzle-orm";
 import { extractConcepts } from "@/lib/llm/extract-concepts";
 import { extractRelations } from "@/lib/llm/extract-relations";
+import { conceptLookupKeys, mergeAliases, parseAliases } from "@/lib/concepts/normalize";
 
 export async function POST(req: Request, { params }: { params: Promise<{ bookId: string }> }) {
   const { bookId } = await params;
@@ -70,18 +71,37 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     // Step 3: Extract concepts
     const extracted = await extractConcepts(title, author, enrichedNotes, model);
 
-    // Step 2: Normalize + upsert concepts
+    // Step 4: Normalize + upsert concepts
+    const existingConcepts = await db.select().from(concepts);
+    const conceptIndex = new Map<string, (typeof existingConcepts)[number]>();
+    for (const concept of existingConcepts) {
+      const aliases = parseAliases(concept.aliases);
+      for (const key of conceptLookupKeys(concept.name, ...aliases)) {
+        conceptIndex.set(key, concept);
+      }
+    }
+
     const conceptIds: Record<string, number> = {};
     for (const ec of extracted) {
-      const existing = await db
-        .select()
-        .from(concepts)
-        .where(eq(concepts.name, ec.name))
-        .limit(1);
+      const extractedKeys = conceptLookupKeys(ec.name, ec.nameJa);
+      const existing = extractedKeys.map((key) => conceptIndex.get(key)).find(Boolean);
 
       let conceptId: number;
-      if (existing.length > 0) {
-        conceptId = existing[0].id;
+      if (existing) {
+        conceptId = existing.id;
+
+        const aliases = mergeAliases(parseAliases(existing.aliases), ec.name, ec.nameJa);
+        if (JSON.stringify(aliases) !== existing.aliases) {
+          const [updated] = await db
+            .update(concepts)
+            .set({ aliases: JSON.stringify(aliases) })
+            .where(eq(concepts.id, existing.id))
+            .returning();
+
+          for (const key of conceptLookupKeys(updated.name, ...aliases)) {
+            conceptIndex.set(key, updated);
+          }
+        }
       } else {
         const [inserted] = await db
           .insert(concepts)
@@ -93,6 +113,10 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
           })
           .returning();
         conceptId = inserted.id;
+
+        for (const key of conceptLookupKeys(inserted.name, ...parseAliases(inserted.aliases))) {
+          conceptIndex.set(key, inserted);
+        }
       }
       conceptIds[ec.name] = conceptId;
 

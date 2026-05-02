@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { books, bookConcepts, concepts, conceptRelations } from "@/lib/db/schema";
+import { books, bookConcepts, concepts } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {

@@ -92,6 +92,7 @@ Treat the following as valid concepts:
 Naming rules:
 - name: always in English, short (1-6 words), no domain prefixes (not "Security: TLS" just "TLS")
 - nameJa: natural Japanese translation of the concept name
+- If the source uses Japanese katakana for an English loanword, use the original English as name and put the katakana/Japanese form in nameJa
 - Preserve famous named ideas when the book is known for them, such as "Be Proactive", "Circle of Influence", or "Think Win-Win".`,
       },
       {
