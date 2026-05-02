@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft, Play, Trash2, Brain } from "lucide-react";
+import { ArrowLeft, Play, Trash2, Brain, Square } from "lucide-react";
 import type { Book } from "@/lib/db/schema";
 import { domainBadgeClass } from "@/lib/domains";
 import { conceptMetadataLabels } from "@/lib/concept-metadata";
@@ -58,6 +58,14 @@ export default function BookDetailPage() {
     }
   };
 
+  const cancelAnalysis = async () => {
+    const res = await fetch(`/api/analyze/${id}/cancel`, { method: "POST" });
+    if (res.ok) {
+      toast.info("解析を停止しました");
+      load();
+    }
+  };
+
   const remove = async () => {
     if (!confirm(`「${book?.title}」を削除しますか?`)) return;
     await fetch(`/api/books/${id}`, { method: "DELETE" });
@@ -97,9 +105,14 @@ export default function BookDetailPage() {
       {isAnalyzing && (
         <Card className="border-blue-200 bg-blue-50">
           <CardContent className="py-4">
-            <div className="flex items-center gap-2 text-blue-700 text-sm mb-2">
-              <Brain className="w-4 h-4 animate-pulse" />
-              LLMが概念と関係を抽出中です...
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 text-blue-700 text-sm">
+                <Brain className="w-4 h-4 animate-pulse" />
+                LLMが概念と関係を抽出中です...
+              </div>
+              <Button variant="outline" size="sm" onClick={cancelAnalysis}>
+                <Square className="w-3 h-3 mr-1" /> 停止
+              </Button>
             </div>
             <Progress value={null} className="h-1.5" />
           </CardContent>

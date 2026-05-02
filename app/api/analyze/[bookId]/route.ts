@@ -13,6 +13,7 @@ import { conceptLookupKeys, mergeAliases, parseAliases } from "@/lib/concepts/no
 import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
 import { fetchBookMetadata } from "@/lib/metadata/fetch-book-metadata";
 import { generateConceptCandidates, tocLineCount } from "@/lib/llm/generate-concept-candidates";
+import { isCancellationRequested, clearCancellation } from "@/lib/analysis-cancellation";
 
 export async function POST(req: Request, { params }: { params: Promise<{ bookId: string }> }) {
   const { bookId } = await params;
@@ -54,6 +55,8 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
       }
     }
 
+    if (isCancellationRequested(bookId)) { clearCancellation(bookId); return; }
+
     // Step 2: Build structured extraction context (current book only — no existing concepts).
     const bookMetadata = await fetchBookMetadata(title, author);
     const enrichedNotes = buildExtractionSource({ title, author, notes, bookMetadata });
@@ -64,6 +67,8 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     const candidates = generateConceptCandidates({ toc: allToc, subjects: allSubjects, userNotes: notes });
     const tocCount = tocLineCount(allToc);
 
+    if (isCancellationRequested(bookId)) { clearCancellation(bookId); return; }
+
     // Step 4: Extract concepts (LLM enriches candidates rather than extracting freely)
     const extracted = await extractConcepts(title, author, enrichedNotes, model, candidates);
 
@@ -73,7 +78,9 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
       throw new Error(`Concept extraction quality check failed: ${qualityWarnings.warnings.join("; ")}`);
     }
 
-    // Step 4: Normalize + upsert concepts
+    if (isCancellationRequested(bookId)) { clearCancellation(bookId); return; }
+
+    // Step 6: Normalize + upsert concepts
     const existingConcepts = await db.select().from(concepts);
     const conceptIndex = new Map<string, (typeof existingConcepts)[number]>();
     for (const concept of existingConcepts) {
@@ -154,7 +161,9 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
       }
     }
 
-    // Step 5: Extract relations inside this book
+    if (isCancellationRequested(bookId)) { clearCancellation(bookId); return; }
+
+    // Step 7: Extract relations inside this book
     await db.delete(conceptRelations).where(eq(conceptRelations.bookId, bookId));
 
     const relations = await extractRelations(title, extracted, model);
@@ -184,7 +193,9 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
       });
     }
 
-    // Step 6: Extract high-confidence cross-book relations.
+    if (isCancellationRequested(bookId)) { clearCancellation(bookId); return; }
+
+    // Step 8: Extract high-confidence cross-book relations.
     const crossBookContext = await buildCrossBookRelationContext(bookId, title, author, extracted, conceptIds);
     const crossBookRelations = await extractCrossBookRelations({
       ...crossBookContext,
