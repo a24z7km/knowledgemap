@@ -12,6 +12,7 @@ interface Node {
   domain: string;
   bookCount: number;
   bookIds: number[];
+  degree?: number;
 }
 
 interface Edge {
@@ -54,6 +55,12 @@ export default function CytoscapeView({
   useEffect(() => { selectionModeRef.current = selectionMode; }, [selectionMode]);
 
   const buildElements = useCallback(() => {
+    const degreeByNodeId = new Map<number, number>();
+    for (const edge of edges) {
+      degreeByNodeId.set(edge.fromConceptId, (degreeByNodeId.get(edge.fromConceptId) ?? 0) + 1);
+      degreeByNodeId.set(edge.toConceptId, (degreeByNodeId.get(edge.toConceptId) ?? 0) + 1);
+    }
+
     return [
       ...nodes.map((n) => {
         let aliases: string[] = [];
@@ -71,6 +78,7 @@ export default function CytoscapeView({
             domain: n.domain,
             bookCount: n.bookCount ?? 1,
             bookIds: n.bookIds ?? [],
+            degree: n.degree ?? degreeByNodeId.get(n.id) ?? 0,
           },
         };
       }),
@@ -113,8 +121,16 @@ export default function CytoscapeView({
             style: {
               label: "data(label)",
               "background-color": (ele: cytoscape.NodeSingular) => domainColor(ele.data("domain")),
-              width: (ele: cytoscape.NodeSingular) => 20 + (ele.data("bookCount") ?? 1) * 8,
-              height: (ele: cytoscape.NodeSingular) => 20 + (ele.data("bookCount") ?? 1) * 8,
+              width: (ele: cytoscape.NodeSingular) => {
+                const bookCount = ele.data("bookCount") ?? 1;
+                const degree = ele.data("degree") ?? 0;
+                return Math.min(78, 22 + Math.sqrt(degree) * 9 + Math.min(bookCount, 4) * 4);
+              },
+              height: (ele: cytoscape.NodeSingular) => {
+                const bookCount = ele.data("bookCount") ?? 1;
+                const degree = ele.data("degree") ?? 0;
+                return Math.min(78, 22 + Math.sqrt(degree) * 9 + Math.min(bookCount, 4) * 4);
+              },
               "font-size": "10px",
               "text-valign": "bottom",
               "text-halign": "center",

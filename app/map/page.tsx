@@ -749,7 +749,7 @@ function RelationSwatch({ relationType, isCrossBook }: { relationType: string; i
 }
 
 function buildNeighborhoodGraph(nodes: GraphNode[], edges: GraphEdge[], centerNodeId: number | null, depth: 1 | 2) {
-  if (centerNodeId == null) return { nodes: [], edges: [] };
+  if (centerNodeId == null) return { nodes, edges };
 
   const included = new Set([centerNodeId]);
   let frontier = new Set([centerNodeId]);
@@ -869,7 +869,7 @@ function emptyGraphMessage(viewMode: ViewMode) {
   switch (viewMode) {
     case "one_hop":
     case "two_hop":
-      return "中心概念を選ぶと、直接つながる概念だけを表示します。";
+      return "ドットをクリックすると、その概念を中心に周辺だけを表示します。";
     case "shortest_path":
       return "開始概念と到達概念を選ぶと、その間の最短経路だけを表示します。";
     case "book":
