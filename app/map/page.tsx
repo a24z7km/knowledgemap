@@ -676,6 +676,20 @@ function MapContent() {
             </Button>
           </div>
 
+          {/* 選択中の概念リスト */}
+          {selectedNodeIds.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {selectedNodeIds.map((id) => {
+                const node = nodes.find((n) => n.id === id);
+                return node ? (
+                  <span key={id} className="inline-block rounded bg-muted px-1.5 py-0.5 text-xs truncate max-w-full">
+                    {lang === "ja" && node.aliases ? (() => { try { const a = JSON.parse(node.aliases); return a[0] || node.name; } catch { return node.name; } })() : node.name}
+                  </span>
+                ) : null;
+              })}
+            </div>
+          )}
+
           {/* モデル選択 */}
           <Select value={insightModel} onValueChange={(v) => setInsightModel(v ?? "gpt-4o-mini")}>
             <SelectTrigger className="h-7 text-xs">
