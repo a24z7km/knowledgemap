@@ -24,11 +24,34 @@ export async function POST(_req: Request, { params }: { params: Promise<{ bookId
   return NextResponse.json({ status: "started" });
 }
 
+async function fetchGoogleBooksDescription(title: string, author: string): Promise<string> {
+  try {
+    const q = encodeURIComponent(`intitle:${title} inauthor:${author}`);
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&langRestrict=ja`, {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return "";
+    const data = await res.json() as { items?: { volumeInfo?: { description?: string; categories?: string[] } }[] };
+    const info = data.items?.[0]?.volumeInfo;
+    if (!info) return "";
+    const parts: string[] = [];
+    if (info.description) parts.push(`[Google Books 概要]\n${info.description}`);
+    if (info.categories?.length) parts.push(`[カテゴリ] ${info.categories.join(", ")}`);
+    return parts.join("\n\n");
+  } catch {
+    return "";
+  }
+}
+
 async function runAnalysis(bookId: number, title: string, author: string, notes: string) {
   const db = getDb();
   try {
-    // Step 1: Extract concepts
-    const extracted = await extractConcepts(title, author, notes);
+    // Step 1: Enrich notes with Google Books description
+    const googleDesc = await fetchGoogleBooksDescription(title, author);
+    const enrichedNotes = [notes, googleDesc].filter(Boolean).join("\n\n");
+
+    // Step 2: Extract concepts
+    const extracted = await extractConcepts(title, author, enrichedNotes);
 
     // Step 2: Normalize + upsert concepts
     const conceptIds: Record<string, number> = {};
