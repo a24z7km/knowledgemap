@@ -11,16 +11,7 @@ import {
 } from "@/lib/llm/extract-cross-book-relations";
 import { conceptLookupKeys, mergeAliases, parseAliases } from "@/lib/concepts/normalize";
 import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
-
-interface GoogleBooksInfo {
-  description: string;
-  categories: string[];
-  publisher: string;
-  publishedDate: string;
-  pageCount: number | null;
-  subtitle: string;
-  tableOfContents: string[];
-}
+import { fetchBookMetadata, type BookMetadata } from "@/lib/metadata/fetch-book-metadata";
 
 export async function POST(req: Request, { params }: { params: Promise<{ bookId: string }> }) {
   const { bookId } = await params;
@@ -41,41 +32,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ bookId:
   return NextResponse.json({ status: "started" });
 }
 
-async function fetchGoogleBooksInfo(title: string, author: string): Promise<GoogleBooksInfo | null> {
-  try {
-    const q = encodeURIComponent(`intitle:${title} inauthor:${author}`);
-    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&langRestrict=ja`, {
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as {
-      items?: {
-        volumeInfo?: {
-          description?: string;
-          categories?: string[];
-          publisher?: string;
-          publishedDate?: string;
-          pageCount?: number;
-          subtitle?: string;
-          tableOfContents?: string[];
-        };
-      }[];
-    };
-    const info = data.items?.[0]?.volumeInfo;
-    if (!info) return null;
-    return {
-      description: info.description ?? "",
-      categories: info.categories ?? [],
-      publisher: info.publisher ?? "",
-      publishedDate: info.publishedDate ?? "",
-      pageCount: info.pageCount ?? null,
-      subtitle: info.subtitle ?? "",
-      tableOfContents: info.tableOfContents ?? [],
-    };
-  } catch {
-    return null;
-  }
-}
 
 async function runAnalysis(bookId: number, title: string, author: string, notes: string, model = "gpt-4o-mini") {
   const db = getDb();
@@ -98,8 +54,8 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     }
 
     // Step 2: Build structured extraction context (current book only — no existing concepts).
-    const googleBooks = await fetchGoogleBooksInfo(title, author);
-    const enrichedNotes = buildExtractionSource({ title, author, notes, googleBooks });
+    const bookMetadata = await fetchBookMetadata(title, author);
+    const enrichedNotes = buildExtractionSource({ title, author, notes, bookMetadata });
 
     // Step 3: Extract concepts
     const extracted = await extractConcepts(title, author, enrichedNotes, model);
@@ -237,34 +193,56 @@ function buildExtractionSource({
   title,
   author,
   notes,
-  googleBooks,
+  bookMetadata,
 }: {
   title: string;
   author: string;
   notes: string;
-  googleBooks: GoogleBooksInfo | null;
+  bookMetadata: import("@/lib/metadata/fetch-book-metadata").BookMetadata;
 }) {
   const parts: string[] = [
     `[Book Metadata]
 Title: ${title}
 Author: ${author}
-Subtitle: ${googleBooks?.subtitle || "(unknown)"}
-Publisher: ${googleBooks?.publisher || "(unknown)"}
-Published Date: ${googleBooks?.publishedDate || "(unknown)"}
-Page Count: ${googleBooks?.pageCount ?? "(unknown)"}`,
+Subtitle: ${bookMetadata.subtitle || "(unknown)"}
+Publisher: ${bookMetadata.publisher || "(unknown)"}
+Published Date: ${bookMetadata.publishedDate || "(unknown)"}
+ISBN: ${bookMetadata.isbn ?? "(unknown)"}
+Page Count: ${bookMetadata.pageCount ?? "(unknown)"}`,
   ];
 
   parts.push(`[User Notes]
 ${notes.trim() || "(No user notes provided.)"}`);
 
-  parts.push(`[Google Books Description]
-${googleBooks?.description?.trim() || "(No Google Books description found.)"}`);
-
-  parts.push(`[Categories]
-${googleBooks?.categories?.length ? googleBooks.categories.join(", ") : "(No categories found.)"}`);
-
+  // Collect all table of contents across sources (prioritize first)
+  const allToc: string[] = [];
+  for (const src of bookMetadata.sources) {
+    if (src.tableOfContents.length > 0) {
+      allToc.push(`- source: ${src.source}\n${src.tableOfContents.map((item) => `  - ${item}`).join("\n")}`);
+    }
+  }
   parts.push(`[Table of Contents]
-${googleBooks?.tableOfContents?.length ? googleBooks.tableOfContents.map((item) => `- ${item}`).join("\n") : "(No table of contents found.)"}`);
+${allToc.length > 0 ? allToc.join("\n") : "(No table of contents found.)"}`);
+
+  // Descriptions per source
+  const descParts: string[] = [];
+  for (const src of bookMetadata.sources) {
+    if (src.description.trim()) {
+      descParts.push(`- source: ${src.source}\n${src.description.trim()}`);
+    }
+  }
+  parts.push(`[Descriptions]
+${descParts.length > 0 ? descParts.join("\n\n") : "(No descriptions found.)"}`);
+
+  // Subjects/categories per source
+  const subjectParts: string[] = [];
+  for (const src of bookMetadata.sources) {
+    if (src.subjects.length > 0) {
+      subjectParts.push(`- source: ${src.source}: ${src.subjects.join(", ")}`);
+    }
+  }
+  parts.push(`[Subjects / Categories]
+${subjectParts.length > 0 ? subjectParts.join("\n") : "(No subjects found.)"}`);
 
   return parts.join("\n\n");
 }

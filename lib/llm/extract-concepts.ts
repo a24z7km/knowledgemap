@@ -17,7 +17,11 @@ export type SourceType =
   | "user_notes"
   | "google_books_description"
   | "categories"
-  | "table_of_contents";
+  | "table_of_contents"
+  | "openbd_description"
+  | "openbd_table_of_contents"
+  | "ndl_description"
+  | "ndl_subjects";
 
 const SOURCE_TYPES: SourceType[] = [
   "title",
@@ -26,6 +30,10 @@ const SOURCE_TYPES: SourceType[] = [
   "google_books_description",
   "categories",
   "table_of_contents",
+  "openbd_description",
+  "openbd_table_of_contents",
+  "ndl_description",
+  "ndl_subjects",
 ];
 
 export interface SourceEvidence {
@@ -112,7 +120,7 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
                 properties: {
                   sourceType: {
                     type: "string",
-                    enum: ["title", "subtitle", "user_notes", "google_books_description", "categories", "table_of_contents"],
+                    enum: ["title", "subtitle", "user_notes", "google_books_description", "categories", "table_of_contents", "openbd_description", "openbd_table_of_contents", "ndl_description", "ndl_subjects"],
                     description: "Which part of the source material this concept comes from",
                   },
                   evidenceText: {
@@ -162,7 +170,7 @@ export async function extractConcepts(
         content: `You are a knowledge extraction specialist. Extract the book-specific knowledge structure from the provided source material only.
 
 SOURCE-GROUNDING RULES (highest priority):
-- Every concept must be grounded in the current book's source material (title, subtitle, user_notes, google_books_description, categories, or table_of_contents).
+- Every concept must be grounded in the current book's source material (title, subtitle, user_notes, google_books_description, categories, table_of_contents, openbd_description, openbd_table_of_contents, ndl_description, or ndl_subjects).
 - Concepts may be explicitly stated OR strongly implied by the source material. If the source identifies a field or organizing category (e.g. "brain chemicals", "neurotransmitters", "economics", "security controls"), you may decompose it into its core domain sub-concepts when the source strongly supports that field.
 - Do not import concepts from other books, previous analyses, existing map concepts, or unrelated general knowledge.
 - Do not infer concepts from the book's reputation or what it "probably covers" — only from the actual source text provided.
