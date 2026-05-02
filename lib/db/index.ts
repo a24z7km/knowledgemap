@@ -4,6 +4,7 @@ import * as schema from "./schema";
 import path from "path";
 import fs from "fs";
 import { RELATION_TYPES } from "@/lib/relations";
+import { CONCEPT_LEVELS, CONCEPT_TYPES, SPECIFICITY_LEVELS } from "@/lib/concept-metadata";
 
 const DB_PATH = path.join(process.cwd(), "data", "app.db");
 
@@ -48,7 +49,10 @@ function getDb() {
       book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
       concept_id INTEGER NOT NULL REFERENCES concepts(id) ON DELETE CASCADE,
       importance INTEGER NOT NULL DEFAULT 3,
-      excerpt TEXT
+      excerpt TEXT,
+      concept_level TEXT NOT NULL DEFAULT 'supporting' CHECK(concept_level IN (${conceptLevelSqlList()})),
+      concept_type TEXT NOT NULL DEFAULT 'theme' CHECK(concept_type IN (${conceptTypeSqlList()})),
+      specificity TEXT NOT NULL DEFAULT 'domain_specific' CHECK(specificity IN (${specificitySqlList()}))
     );
 
     CREATE TABLE IF NOT EXISTS concept_relations (
@@ -66,6 +70,7 @@ function getDb() {
 
   ensureRelationTypeConstraint(sqlite);
   ensureAnalyzeStatusConstraint(sqlite);
+  ensureBookConceptMetadataColumns(sqlite);
   normalizeExistingConceptRelations(sqlite);
   ensureConceptRelationUniqueIndexes(sqlite);
 
@@ -78,6 +83,47 @@ function analyzeStatusSqlList() {
 
 function relationTypeSqlList() {
   return RELATION_TYPES.map((type) => `'${type}'`).join(",");
+}
+
+function conceptLevelSqlList() {
+  return CONCEPT_LEVELS.map((level) => `'${level}'`).join(",");
+}
+
+function conceptTypeSqlList() {
+  return CONCEPT_TYPES.map((type) => `'${type}'`).join(",");
+}
+
+function specificitySqlList() {
+  return SPECIFICITY_LEVELS.map((specificity) => `'${specificity}'`).join(",");
+}
+
+function ensureBookConceptMetadataColumns(sqlite: Database.Database) {
+  const columns = sqlite.prepare("PRAGMA table_info(book_concepts)").all() as { name: string }[];
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("concept_level")) {
+    sqlite.exec(`
+      ALTER TABLE book_concepts
+      ADD COLUMN concept_level TEXT NOT NULL DEFAULT 'supporting'
+      CHECK(concept_level IN (${conceptLevelSqlList()}))
+    `);
+  }
+
+  if (!columnNames.has("concept_type")) {
+    sqlite.exec(`
+      ALTER TABLE book_concepts
+      ADD COLUMN concept_type TEXT NOT NULL DEFAULT 'theme'
+      CHECK(concept_type IN (${conceptTypeSqlList()}))
+    `);
+  }
+
+  if (!columnNames.has("specificity")) {
+    sqlite.exec(`
+      ALTER TABLE book_concepts
+      ADD COLUMN specificity TEXT NOT NULL DEFAULT 'domain_specific'
+      CHECK(specificity IN (${specificitySqlList()}))
+    `);
+  }
 }
 
 function ensureAnalyzeStatusConstraint(sqlite: Database.Database) {

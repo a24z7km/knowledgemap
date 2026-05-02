@@ -20,6 +20,9 @@ export async function GET(req: Request) {
         description: concepts.description,
         bookCount: sql<number>`count(distinct ${bookConcepts.bookId})`,
         bookIds: sql<string | null>`group_concat(distinct ${bookConcepts.bookId})`,
+        conceptLevels: sql<string | null>`group_concat(distinct ${bookConcepts.conceptLevel})`,
+        conceptTypes: sql<string | null>`group_concat(distinct ${bookConcepts.conceptType})`,
+        specificities: sql<string | null>`group_concat(distinct ${bookConcepts.specificity})`,
       })
       .from(concepts)
       .leftJoin(bookConcepts, eq(bookConcepts.conceptId, concepts.id))
@@ -43,6 +46,9 @@ export async function GET(req: Request) {
       nodes: filteredConcepts.map((concept) => ({
         ...concept,
         bookIds: concept.bookIds?.split(",").map(Number).filter(Number.isFinite) ?? [],
+        conceptLevels: concept.conceptLevels?.split(",").filter(Boolean) ?? [],
+        conceptTypes: concept.conceptTypes?.split(",").filter(Boolean) ?? [],
+        specificities: concept.specificities?.split(",").filter(Boolean) ?? [],
       })),
       edges: filteredRelations,
     });

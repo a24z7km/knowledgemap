@@ -14,6 +14,7 @@ import Link from "next/link";
 import type { Book } from "@/lib/db/schema";
 import { RELATION_LABELS, relationColor, relationDash, relationLabel } from "@/lib/relations";
 import { DOMAIN_LABELS, domainLabel } from "@/lib/domains";
+import { conceptMetadataLabels } from "@/lib/concept-metadata";
 
 const CytoscapeView = dynamic(() => import("@/components/graph/CytoscapeView"), {
   ssr: false,
@@ -42,7 +43,16 @@ interface GraphEdge {
 
 interface ConceptDetail {
   concept: { id: number; name: string; domain: string; description: string | null };
-  appearances: { bookId: number; bookTitle: string; bookAuthor: string; importance: number; excerpt: string | null }[];
+  appearances: {
+    bookId: number;
+    bookTitle: string;
+    bookAuthor: string;
+    importance: number;
+    excerpt: string | null;
+    conceptLevel?: string | null;
+    conceptType?: string | null;
+    specificity?: string | null;
+  }[];
   relations: GraphEdge[];
 }
 
@@ -772,6 +782,13 @@ function MapContent() {
                       <span className="shrink-0 text-yellow-500 tracking-tighter">
                         {"★".repeat(a.importance)}{"☆".repeat(5 - a.importance)}
                       </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {conceptMetadataLabels(a).map((label) => (
+                        <Badge key={label} variant="outline" className="text-xs">
+                          {label}
+                        </Badge>
+                      ))}
                     </div>
                     {a.excerpt && (
                       <p className="italic border-l-2 pl-2 text-muted-foreground">{a.excerpt}</p>

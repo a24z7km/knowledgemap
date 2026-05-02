@@ -1,5 +1,13 @@
 import OpenAI from "openai";
 import { CONCEPT_DOMAINS, type ConceptDomain } from "@/lib/domains";
+import {
+  CONCEPT_LEVELS,
+  CONCEPT_TYPES,
+  SPECIFICITY_LEVELS,
+  type ConceptLevel,
+  type ConceptType,
+  type Specificity,
+} from "@/lib/concept-metadata";
 
 const client = new OpenAI();
 
@@ -10,6 +18,9 @@ export interface ExtractedConcept {
   importance: 1 | 2 | 3 | 4 | 5;
   excerpt: string;
   domain: ConceptDomain;
+  conceptLevel: ConceptLevel;
+  conceptType: ConceptType;
+  specificity: Specificity;
 }
 
 const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
@@ -28,7 +39,7 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
               name: {
                 type: "string",
                 description:
-                  "Short normalized concept, framework, principle, mental model, or practice name in English (no domain prefix, 1-6 words)",
+                  "Short normalized concept name in English (no domain prefix, usually 1-6 words). Prefer named theories, mechanisms, technical terms, chapter-level terms, and author-specific concepts over broad topic labels.",
               },
               nameJa: {
                 type: "string",
@@ -37,7 +48,7 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
               description: {
                 type: "string",
                 description:
-                  "1-3 sentence description that explains how the idea, framework, principle, or practice is used in the book",
+                  "1-3 sentence description that explains the concept's role in this specific book, not a generic dictionary definition",
               },
               importance: {
                 type: "integer",
@@ -55,11 +66,38 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
                 description:
                   "Primary knowledge domain. Prefer a specific domain; use general only when no other domain fits.",
               },
+              conceptLevel: {
+                type: "string",
+                enum: CONCEPT_LEVELS,
+                description:
+                  "core=central concept, chapter-level term, theory/model/technical term; supporting=needed to understand core; application=method/workflow/use; outcome=effect/result/goal; context=background/problem/precondition",
+              },
+              conceptType: {
+                type: "string",
+                enum: CONCEPT_TYPES,
+                description: "The kind of concept: theory, model, framework, principle, technical_term, mechanism, method, practice, distinction, metric, institution, person, event, phenomenon, outcome, or theme",
+              },
+              specificity: {
+                type: "string",
+                enum: SPECIFICITY_LEVELS,
+                description:
+                  "book_specific=strongly tied to this book/author/chapter structure; domain_specific=important specialized domain concept; generic=broad cross-domain label. Keep generic at or below 20%.",
+              },
             },
-            required: ["name", "nameJa", "description", "importance", "excerpt", "domain"],
+            required: [
+              "name",
+              "nameJa",
+              "description",
+              "importance",
+              "excerpt",
+              "domain",
+              "conceptLevel",
+              "conceptType",
+              "specificity",
+            ],
           },
-          minItems: 10,
-          maxItems: 50,
+          minItems: 18,
+          maxItems: 60,
         },
       },
       required: ["concepts"],
@@ -81,21 +119,42 @@ export async function extractConcepts(
     messages: [
       {
         role: "system",
-        content: `You are a knowledge extraction specialist. Extract reusable knowledge units from books across business, psychology, philosophy, cybersecurity, finance, law, math, and computer science.
+        content: `You are a knowledge extraction specialist. Extract the book-specific knowledge structure of each book across business, management, economics, psychology, neuroscience, health, philosophy, sociology, history, politics, education, cybersecurity, security, technology, finance, law, math, and computer science.
 
-Treat the following as valid concepts:
-- named frameworks and models
-- principles, laws, habits, maxims, and rules of thumb
-- ways of thinking, mental models, and decision lenses
-- practices, methods, workflows, and exercises
-- key distinctions, tradeoffs, and recurring patterns
-- technical/domain concepts
+Primary extraction goal:
+- First infer what the book is organized around: chapter titles, repeated key terms, named theories, mechanisms, models, institutions, technical terms, author-specific ideas, and domain vocabulary.
+- Prefer concepts that reveal the book's center of gravity and internal structure.
+- Do not fill the output with broad labels such as Motivation, Productivity, Leadership, Risk Management, Learning, Mindfulness, Ethics, Happiness, or Decision Making unless the book explicitly treats one as a central named concept.
+- If the source material contains proper nouns, specialist terms, chapter-level keywords, theory names, model names, mechanisms, metrics, technical terms, or named distinctions, extract those before abstract themes.
+- Use abstract themes only when they support or connect specific concepts.
+
+Treat the following as valid concepts, in priority order:
+1. Book-specific or author-specific named concepts and chapter-level terms
+2. Domain-specific theories, models, mechanisms, technical terms, institutions, metrics, and distinctions
+3. Supporting concepts needed to understand the central structure
+4. Practical methods, workflows, exercises, and applications
+5. Outcomes, goals, broad themes, and background context
 
 Naming rules:
 - name: always in English, short (1-6 words), no domain prefixes (not "Security: TLS" just "TLS")
 - nameJa: natural Japanese translation of the concept name
 - If the source uses Japanese katakana for an English loanword, use the original English as name and put the katakana/Japanese form in nameJa
 - Preserve famous named ideas when the book is known for them, such as "Be Proactive", "Circle of Influence", or "Think Win-Win".
+- Preserve domain terms even when they are narrower than a broad self-help or business abstraction.
+
+Concept metadata:
+- conceptLevel:
+  - core: the book's central concepts, chapter-title-level ideas, theory/model names, specialist vocabulary, author-specific terms
+  - supporting: concepts needed to understand a core concept
+  - application: practices, workflows, uses, exercises, interventions
+  - outcome: effects, results, goals, benefits
+  - context: background, problem framing, assumptions, conditions
+- conceptType:
+  - theory, model, framework, principle, technical_term, mechanism, method, practice, distinction, metric, institution, person, event, phenomenon, outcome, theme
+- specificity:
+  - book_specific: strongly tied to this book, author, or chapter structure
+  - domain_specific: common in the field but essential to this book
+  - generic: broad cross-domain labels. Keep generic <= 20% of the output.
 
 Domain classification rules:
 - thinking: thinking methods, mental models, creativity, framing, abstraction, idea generation
@@ -108,30 +167,67 @@ Domain classification rules:
 - productivity: execution, time management, workflow, focus, task systems
 - learning: study, reflection, skill acquisition, memory, deliberate practice, experiential learning
 - psychology: cognitive/emotional mechanisms, personality, behavioral patterns, therapy concepts
-- business: organizations, leadership, strategy, management, marketing, entrepreneurship
-- cybersec / finance / law / cs / math: use for clearly technical concepts in those fields
+- business: strategy, marketing, entrepreneurship, markets, customers, business models
+- economics: opportunity cost, marginal analysis, demand/supply, incentives, elasticity, macro/microeconomics
+- sociology: institutions, social structures, roles, networks, norms, bureaucracy, social theory
+- neuroscience: brain regions, neurotransmitters, neural mechanisms, cognition, reward, memory systems
+- health: medicine, wellbeing, sleep, exercise, nutrition, clinical or public health concepts
+- biology: biological systems, evolution, physiology, ecology, genetics
+- history: historical periods, movements, events, historiography
+- politics: governance, policy, power, democracy, ideology, political institutions
+- education: pedagogy, curriculum, schooling, instructional design
+- technology: non-CS technology, platforms, engineering systems, digital transformation
+- security: security concepts outside strictly cyber contexts; physical, organizational, geopolitical security
+- management: organizations, leadership, operations, teams, psychological safety, transaction costs, bureaucracy
+- philosophy: metaphysics, epistemology, ethics schools, existentialism, utilitarianism, deontology, named philosophers
+- cybersec: zero trust, authentication, authorization, threat modeling, attack surface, cryptography, network/app security
+- finance / law / cs / math: use for clearly technical concepts in those fields
 - general: last resort only. Avoid using general when a more specific domain above applies.
 
-Avoid assigning more than 20% of concepts to general unless the book truly spans unrelated topics.`,
+Bad extraction examples:
+- Economics book: Decision Making / Business Strategy / Productivity only
+- Security book: Risk Management / Trust / Compliance only
+- Neuroscience book: Motivation / Focus / Self Management only
+- Philosophy book: Ethics / Happiness / Life Purpose only
+
+Good extraction examples:
+- Economics: Opportunity Cost, Marginal Utility, Demand Curve, Price Elasticity, Externality
+- Security: Zero Trust, Authentication, Authorization, Threat Modeling, Attack Surface
+- Neuroscience: Dopamine, Serotonin, Noradrenaline, Working Memory, Reward System
+- Philosophy: Utilitarianism, Deontology, Existentialism, Categorical Imperative
+
+Output balance:
+- 40-60%: core and/or domain_specific concepts
+- 20-30%: supporting concepts
+- 10-25%: application or practice concepts
+- 5-15%: outcome or context concepts
+- generic specificity must be <= 20%.
+- Avoid assigning more than 20% of concepts to general domain unless the book truly spans unrelated topics.`,
       },
       {
         role: "user",
-        content: `Extract 15-50 reusable knowledge units from this book:
+        content: `Extract 18-60 knowledge units from this book. Focus on the book's central structure, not generic topic summaries.
 
 Title: ${title}
 Author: ${author}
 
-Notes/Summary:
-${notes || "(No notes provided — infer well-known concepts, frameworks, and thinking patterns from the title and author)"}
+Structured source material:
+${notes || "(No notes provided — infer likely central concepts from the title, author, and well-known structure of the book, but avoid unsupported generic filler.)"}
 
-Include not only topic nouns, but also the frameworks, principles, ways of thinking, practical methods, and key distinctions explained by the book.
+Extraction procedure:
+1. Identify the organizing axis of the book.
+2. Extract chapter-level, repeated, named, specialist, or author-specific concepts first.
+3. Add supporting concepts that explain those core terms.
+4. Add practices/applications and outcomes only after the core structure is represented.
 
-Balance the output:
-- 30-50% named frameworks, principles, habits, or mental models
-- 30-50% supporting concepts needed to understand them
-- 10-30% practices, applications, or tradeoffs
+Prefer:
+- "Dopamine", "Reward System", "Working Memory" over only "Motivation" or "Focus"
+- "Opportunity Cost", "Demand Curve" over only "Decision Making"
+- "Zero Trust", "Authentication", "Threat Modeling" over only "Risk Management"
+- "Utilitarianism", "Deontology" over only "Ethics"
+- "Psychological Safety", "Transaction Cost" over only "Leadership"
 
-Prefer book-specific ideas over generic labels. For example, extract "Circle of Influence" rather than only "Self Improvement".`,
+Return enough concepts to preserve the book's structure. If only broad themes are available, mark them as generic and keep them under 20%.`,
       },
     ],
   });
@@ -142,5 +238,71 @@ Prefer book-specific ideas over generic labels. For example, extract "Circle of 
   }
 
   const input = JSON.parse(toolCall.function.arguments) as { concepts: ExtractedConcept[] };
-  return input.concepts;
+  return normalizeExtractedConcepts(input.concepts ?? []);
+}
+
+function normalizeExtractedConcepts(concepts: ExtractedConcept[]): ExtractedConcept[] {
+  const unique = new Map<string, ExtractedConcept>();
+
+  for (const concept of concepts) {
+    const normalized = normalizeExtractedConcept(concept);
+    const key = normalized.name.trim().toLowerCase();
+    if (!key) continue;
+    const previous = unique.get(key);
+    if (!previous || normalized.importance > previous.importance) {
+      unique.set(key, normalized);
+    }
+  }
+
+  const sorted = [...unique.values()].sort((a, b) => {
+    const specificityScore = scoreSpecificity(b.specificity) - scoreSpecificity(a.specificity);
+    if (specificityScore !== 0) return specificityScore;
+    const levelScore = scoreLevel(b.conceptLevel) - scoreLevel(a.conceptLevel);
+    if (levelScore !== 0) return levelScore;
+    return b.importance - a.importance;
+  });
+
+  const genericLimit = Math.max(1, Math.floor(sorted.length * 0.2));
+  let genericCount = 0;
+  return sorted.filter((concept) => {
+    if (concept.specificity !== "generic") return true;
+    genericCount += 1;
+    return genericCount <= genericLimit;
+  });
+}
+
+function normalizeExtractedConcept(concept: ExtractedConcept): ExtractedConcept {
+  return {
+    ...concept,
+    name: concept.name?.trim() ?? "",
+    nameJa: concept.nameJa?.trim() ?? "",
+    description: concept.description?.trim() ?? "",
+    excerpt: concept.excerpt?.trim() ?? "",
+    importance: clampImportance(concept.importance),
+    domain: CONCEPT_DOMAINS.includes(concept.domain) ? concept.domain : "general",
+    conceptLevel: CONCEPT_LEVELS.includes(concept.conceptLevel) ? concept.conceptLevel : "supporting",
+    conceptType: CONCEPT_TYPES.includes(concept.conceptType) ? concept.conceptType : "theme",
+    specificity: SPECIFICITY_LEVELS.includes(concept.specificity) ? concept.specificity : "domain_specific",
+  };
+}
+
+function clampImportance(value: number): 1 | 2 | 3 | 4 | 5 {
+  const rounded = Math.round(Number(value));
+  if (rounded <= 1) return 1;
+  if (rounded >= 5) return 5;
+  return rounded as 1 | 2 | 3 | 4 | 5;
+}
+
+function scoreSpecificity(specificity: Specificity) {
+  if (specificity === "book_specific") return 3;
+  if (specificity === "domain_specific") return 2;
+  return 1;
+}
+
+function scoreLevel(level: ConceptLevel) {
+  if (level === "core") return 5;
+  if (level === "supporting") return 4;
+  if (level === "application") return 3;
+  if (level === "context") return 2;
+  return 1;
 }

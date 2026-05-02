@@ -18,6 +18,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         bookAuthor: books.author,
         importance: bookConcepts.importance,
         excerpt: bookConcepts.excerpt,
+        conceptLevel: bookConcepts.conceptLevel,
+        conceptType: bookConcepts.conceptType,
+        specificity: bookConcepts.specificity,
       })
       .from(bookConcepts)
       .innerJoin(books, eq(bookConcepts.bookId, books.id))

@@ -11,6 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { ArrowLeft, Play, Trash2, Brain } from "lucide-react";
 import type { Book } from "@/lib/db/schema";
 import { domainBadgeClass } from "@/lib/domains";
+import { conceptMetadataLabels } from "@/lib/concept-metadata";
 
 interface ConceptRow {
   id: number;
@@ -20,6 +21,9 @@ interface ConceptRow {
   conceptDescription: string | null;
   importance: number;
   excerpt: string | null;
+  conceptLevel?: string | null;
+  conceptType?: string | null;
+  specificity?: string | null;
 }
 
 export default function BookDetailPage() {
@@ -148,6 +152,13 @@ export default function BookDetailPage() {
                         >
                           {c.conceptName}
                         </Link>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {conceptMetadataLabels(c).map((label) => (
+                            <span key={label} className="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                              {label}
+                            </span>
+                          ))}
+                        </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {c.conceptDescription}
                         </p>

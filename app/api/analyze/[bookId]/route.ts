@@ -12,6 +12,16 @@ import {
 import { conceptLookupKeys, mergeAliases, parseAliases } from "@/lib/concepts/normalize";
 import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
 
+interface GoogleBooksInfo {
+  description: string;
+  categories: string[];
+  publisher: string;
+  publishedDate: string;
+  pageCount: number | null;
+  subtitle: string;
+  tableOfContents: string[];
+}
+
 export async function POST(req: Request, { params }: { params: Promise<{ bookId: string }> }) {
   const { bookId } = await params;
   const body = await req.json().catch(() => ({}));
@@ -31,22 +41,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ bookId:
   return NextResponse.json({ status: "started" });
 }
 
-async function fetchGoogleBooksDescription(title: string, author: string): Promise<string> {
+async function fetchGoogleBooksInfo(title: string, author: string): Promise<GoogleBooksInfo | null> {
   try {
     const q = encodeURIComponent(`intitle:${title} inauthor:${author}`);
     const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&langRestrict=ja`, {
       signal: AbortSignal.timeout(8000),
     });
-    if (!res.ok) return "";
-    const data = await res.json() as { items?: { volumeInfo?: { description?: string; categories?: string[] } }[] };
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      items?: {
+        volumeInfo?: {
+          description?: string;
+          categories?: string[];
+          publisher?: string;
+          publishedDate?: string;
+          pageCount?: number;
+          subtitle?: string;
+          tableOfContents?: string[];
+        };
+      }[];
+    };
     const info = data.items?.[0]?.volumeInfo;
-    if (!info) return "";
-    const parts: string[] = [];
-    if (info.description) parts.push(`[Google Books 概要]\n${info.description}`);
-    if (info.categories?.length) parts.push(`[カテゴリ] ${info.categories.join(", ")}`);
-    return parts.join("\n\n");
+    if (!info) return null;
+    return {
+      description: info.description ?? "",
+      categories: info.categories ?? [],
+      publisher: info.publisher ?? "",
+      publishedDate: info.publishedDate ?? "",
+      pageCount: info.pageCount ?? null,
+      subtitle: info.subtitle ?? "",
+      tableOfContents: info.tableOfContents ?? [],
+    };
   } catch {
-    return "";
+    return null;
   }
 }
 
@@ -70,15 +97,25 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
       }
     }
 
-    // Step 2: Enrich notes with Google Books description
-    const googleDesc = await fetchGoogleBooksDescription(title, author);
-    const enrichedNotes = [notes, googleDesc].filter(Boolean).join("\n\n");
+    // Step 2: Build structured extraction context.
+    const googleBooks = await fetchGoogleBooksInfo(title, author);
+    const existingConcepts = await db.select().from(concepts);
+    const enrichedNotes = buildExtractionSource({
+      title,
+      author,
+      notes,
+      googleBooks,
+      existingConcepts: existingConcepts.map((concept) => ({
+        name: concept.name,
+        domain: concept.domain,
+        description: concept.description,
+      })),
+    });
 
     // Step 3: Extract concepts
     const extracted = await extractConcepts(title, author, enrichedNotes, model);
 
     // Step 4: Normalize + upsert concepts
-    const existingConcepts = await db.select().from(concepts);
     const conceptIndex = new Map<string, (typeof existingConcepts)[number]>();
     for (const concept of existingConcepts) {
       const aliases = parseAliases(concept.aliases);
@@ -97,14 +134,25 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
         conceptId = existing.id;
 
         const aliases = mergeAliases(parseAliases(existing.aliases), ec.name, ec.nameJa);
+        const conceptUpdates: Partial<typeof concepts.$inferInsert> = {};
         if (JSON.stringify(aliases) !== existing.aliases) {
+          conceptUpdates.aliases = JSON.stringify(aliases);
+        }
+        if (existing.domain === "general" && ec.domain !== "general") {
+          conceptUpdates.domain = ec.domain;
+        }
+        if (!existing.description && ec.description) {
+          conceptUpdates.description = ec.description;
+        }
+
+        if (Object.keys(conceptUpdates).length > 0) {
           const [updated] = await db
             .update(concepts)
-            .set({ aliases: JSON.stringify(aliases) })
+            .set(conceptUpdates)
             .where(eq(concepts.id, existing.id))
             .returning();
 
-          for (const key of conceptLookupKeys(updated.name, ...aliases)) {
+          for (const key of conceptLookupKeys(updated.name, ...parseAliases(updated.aliases))) {
             conceptIndex.set(key, updated);
           }
         }
@@ -138,6 +186,9 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
           conceptId,
           importance: ec.importance,
           excerpt: ec.excerpt,
+          conceptLevel: ec.conceptLevel,
+          conceptType: ec.conceptType,
+          specificity: ec.specificity,
         });
       }
     }
@@ -190,6 +241,57 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
       .set({ analyzeStatus: "failed", analyzeError: String(err) })
       .where(eq(books.id, bookId));
   }
+}
+
+function buildExtractionSource({
+  title,
+  author,
+  notes,
+  googleBooks,
+  existingConcepts,
+}: {
+  title: string;
+  author: string;
+  notes: string;
+  googleBooks: GoogleBooksInfo | null;
+  existingConcepts: { name: string; domain: string; description: string | null }[];
+}) {
+  const parts: string[] = [
+    `[Book Metadata]
+Title: ${title}
+Author: ${author}
+Subtitle: ${googleBooks?.subtitle || "(unknown)"}
+Publisher: ${googleBooks?.publisher || "(unknown)"}
+Published Date: ${googleBooks?.publishedDate || "(unknown)"}
+Page Count: ${googleBooks?.pageCount ?? "(unknown)"}`,
+  ];
+
+  parts.push(`[User Notes]
+${notes.trim() || "(No user notes provided.)"}`);
+
+  parts.push(`[Google Books Description]
+${googleBooks?.description?.trim() || "(No Google Books description found.)"}`);
+
+  parts.push(`[Categories]
+${googleBooks?.categories?.length ? googleBooks.categories.join(", ") : "(No categories found.)"}`);
+
+  parts.push(`[Table of Contents]
+${googleBooks?.tableOfContents?.length ? googleBooks.tableOfContents.map((item) => `- ${item}`).join("\n") : "(No table of contents found.)"}`);
+
+  parts.push(`[Existing Concepts Context]
+Use this only to avoid accidental duplicates and to connect to the existing map. Do not let these existing broad concepts replace book-specific concepts from the current book.
+${formatExistingConcepts(existingConcepts)}`);
+
+  return parts.join("\n\n");
+}
+
+function formatExistingConcepts(existingConcepts: { name: string; domain: string; description: string | null }[]) {
+  if (existingConcepts.length === 0) return "(No existing concepts yet.)";
+
+  return existingConcepts
+    .slice(0, 120)
+    .map((concept) => `- ${concept.name} [${concept.domain}]${concept.description ? `: ${concept.description}` : ""}`)
+    .join("\n");
 }
 
 async function buildCrossBookRelationContext(

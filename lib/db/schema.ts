@@ -1,6 +1,7 @@
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { RELATION_TYPES } from "@/lib/relations";
+import { CONCEPT_LEVELS, CONCEPT_TYPES, SPECIFICITY_LEVELS } from "@/lib/concept-metadata";
 
 export const books = sqliteTable("books", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -28,6 +29,9 @@ export const bookConcepts = sqliteTable("book_concepts", {
   conceptId: integer("concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
   importance: integer("importance").notNull().default(3),
   excerpt: text("excerpt"),
+  conceptLevel: text("concept_level", { enum: CONCEPT_LEVELS }).notNull().default("supporting"),
+  conceptType: text("concept_type", { enum: CONCEPT_TYPES }).notNull().default("theme"),
+  specificity: text("specificity", { enum: SPECIFICITY_LEVELS }).notNull().default("domain_specific"),
 });
 
 export const conceptRelations = sqliteTable("concept_relations", {
