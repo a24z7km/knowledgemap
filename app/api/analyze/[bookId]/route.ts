@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { books, concepts, bookConcepts, conceptRelations, extractionRuns, rawConcepts, bookKeywordDrafts } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { extractConcepts } from "@/lib/llm/extract-concepts";
 import type { TargetCount } from "@/lib/llm/extract-concepts";
+import { extractConcepts } from "@/lib/llm/extract-concepts";
 import { extractRelations } from "@/lib/llm/extract-relations";
 import {
   extractCrossBookRelations,
@@ -98,7 +98,6 @@ async function runAnalysis(
     // Step 2: Build structured extraction context.
     // When Step 1 has been completed, use persisted drafts as the source (no re-fetch).
     let bookMetadata: import("@/lib/metadata/fetch-book-metadata").BookMetadata;
-    let enrichedNotes: string;
 
     if (step1CompletedAt) {
       const drafts = await db
@@ -124,7 +123,7 @@ async function runAnalysis(
     targetCount = targetCountForSourceQuality(
       sourceQuality ?? measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary })
     );
-    enrichedNotes = buildExtractionSource({ title, author, notes, userToc, userSummary, bookMetadata });
+    const enrichedNotes = buildExtractionSource({ title, author, notes, userToc, userSummary, bookMetadata });
     sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary, sourceText: enrichedNotes });
 
     if (sourceQuality.total < 200) {
@@ -219,7 +218,7 @@ async function runAnalysis(
     await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, searchQuality, targetCount });
 
     // Step 5: Quality check
-    const qualityWarnings = checkConceptQuality(extracted, tocCount);
+    const qualityWarnings = checkConceptQuality(extracted, tocCount, targetCount);
     droppedReasons = [...droppedReasons, ...qualityWarnings.warnings];
     if (qualityWarnings.status === "failed") {
       await finishExtractionRun(extractionRunId, "failed", {
@@ -618,14 +617,21 @@ function splitUserToc(userToc: string): string[] {
 
 function checkConceptQuality(
   extracted: Awaited<ReturnType<typeof extractConcepts>>,
-  tocCount: number
+  tocCount: number,
+  targetCount: TargetCount
 ): { status: "ok" | "warning" | "failed"; warnings: string[] } {
   const warnings: string[] = [];
+  const expectedFromToc = Math.min(targetCount.max, Math.ceil(tocCount * 0.5));
 
-  if (tocCount > 0 && extracted.length < tocCount * 0.5) {
+  if (tocCount > 0 && extracted.length < expectedFromToc) {
     warnings.push(
-      `TOC has ${tocCount} meaningful entries but only ${extracted.length} concepts were extracted (expected >= ${Math.ceil(tocCount * 0.5)})`
+      `TOC has ${tocCount} meaningful entries but only ${extracted.length} concepts were extracted (expected >= ${expectedFromToc})`
     );
+  }
+
+  if (extracted.length === 0) {
+    warnings.push("No concepts were extracted");
+    return { status: "failed", warnings };
   }
 
   const personCount = extracted.filter((c) => c.conceptType === "person").length;
@@ -643,7 +649,8 @@ function checkConceptQuality(
     warnings.push(`${noEvidence} concepts have no sourceEvidence text`);
   }
 
-  if (tocCount > 0 && extracted.length < tocCount * 0.5) {
+  if (extracted.length < targetCount.min) {
+    warnings.push(`Only ${extracted.length} concepts were extracted (target minimum ${targetCount.min})`);
     return { status: "failed", warnings };
   }
   return { status: warnings.length > 0 ? "warning" : "ok", warnings };

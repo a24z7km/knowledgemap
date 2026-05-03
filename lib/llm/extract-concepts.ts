@@ -365,7 +365,10 @@ function normalizeExtractedConcept(
     ? concept.groundingType as GroundingType
     : "model_prior";
   const specificityScore = clampImportance(concept.specificity ?? 3);
-  const evidenceText = attachSourceUrlToEvidence(concept.evidenceText?.trim() ?? "", sourceText);
+  const evidenceText = attachSourceUrlToEvidence(
+    firstPresentText(concept.evidenceText, concept.excerpt),
+    sourceText
+  );
   const groundingType = verifyGroundingType(claimedGroundingType, evidenceText, sourceText, metadataText);
 
   return {
@@ -444,6 +447,10 @@ function extractEvidenceUrl(value: string): string | null {
 
 function normalizeEvidence(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function firstPresentText(...values: Array<string | undefined>): string {
+  return values.map((value) => value?.trim() ?? "").find(Boolean) ?? "";
 }
 
 function clampImportance(value: number): 1 | 2 | 3 | 4 | 5 {
