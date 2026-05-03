@@ -110,6 +110,7 @@ function MapContent() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [remapModel, setRemapModel] = useState("gpt-4o-mini");
   const [remapping, setRemapping] = useState(false);
+  const [connectingOrphans, setConnectingOrphans] = useState(false);
   const [insightModel, setInsightModel] = useState("gpt-4o-mini");
   const [insight, setInsight] = useState<MapInsight | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
@@ -123,6 +124,26 @@ function MapContent() {
     highlightParam ? Number(highlightParam) : null
   );
   const pendingNodeIdRef = useRef<number | null>(null);
+
+  const runConnectOrphans = async () => {
+    setConnectingOrphans(true);
+    try {
+      const res = await fetch("/api/connect-orphans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: remapModel }),
+      });
+      const data = await res.json() as { orphanCount?: number; newRelations?: number; message?: string; error?: string };
+      if (!res.ok) { toast.error(data.error ?? "孤立接続に失敗しました"); return; }
+      if (data.message) { toast.info(data.message); return; }
+      toast.success(`孤立接続完了: ${data.orphanCount}件処理 / 新規関係 ${data.newRelations}件`);
+      loadGraph();
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setConnectingOrphans(false);
+    }
+  };
 
   const runGlobalRemap = async () => {
     setRemapping(true);
@@ -616,11 +637,22 @@ function MapContent() {
             size="sm"
             variant="outline"
             className="h-8 gap-1.5 text-xs"
-            disabled={remapping}
+            disabled={remapping || connectingOrphans}
             onClick={runGlobalRemap}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${remapping ? "animate-spin" : ""}`} />
             {remapping ? "リマップ中..." : "全体リマップ"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            disabled={remapping || connectingOrphans}
+            onClick={runConnectOrphans}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${connectingOrphans ? "animate-spin" : ""}`} />
+            {connectingOrphans ? "接続中..." : "孤立を接続"}
           </Button>
 
           {selectedBooks.length > 0 && (
