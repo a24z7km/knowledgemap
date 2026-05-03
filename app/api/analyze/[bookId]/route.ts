@@ -14,6 +14,7 @@ import { conceptLookupKeys, mergeAliases, parseAliases } from "@/lib/concepts/no
 import { scoreConceptCandidates } from "@/lib/concepts/scoring";
 import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
 import { fetchBookMetadata, type SearchQualityStats, type SourceQualityStats } from "@/lib/metadata/fetch-book-metadata";
+import { enrichFromWebSearch } from "@/lib/metadata/fetch-web-enrichment";
 import { generateConceptCandidates, tocLineCount } from "@/lib/llm/generate-concept-candidates";
 import { isCancellationRequested, clearCancellation } from "@/lib/analysis-cancellation";
 
@@ -97,6 +98,13 @@ async function runAnalysis(
     const bookMetadata = await fetchBookMetadata(title, author);
     searchQuality = measureSearchQuality({ title, author, bookMetadata });
     sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary });
+    if (sourceQuality.total < 600) {
+      const webSources = await enrichFromWebSearch(title, author);
+      if (webSources.length > 0) {
+        bookMetadata.sources.push(...webSources);
+        sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary });
+      }
+    }
     targetCount = targetCountForSourceQuality(sourceQuality);
     const enrichedNotes = buildExtractionSource({ title, author, notes, userToc, userSummary, bookMetadata });
     sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary, sourceText: enrichedNotes });
@@ -122,9 +130,18 @@ async function runAnalysis(
 
     // Step 3: Pre-generate concept candidates from TOC / subjects / user notes
     const allToc = bookMetadata.sources.flatMap((s) => s.tableOfContents);
+    const tocCandidates = bookMetadata.sources.flatMap((source) =>
+      source.tableOfContents.map((text) => ({ text, sourceUrl: source.sourceUrl }))
+    );
     const userTocLines = splitUserToc(userToc);
-    const allSubjects = bookMetadata.sources.flatMap((s) => s.subjects);
-    const candidates = generateConceptCandidates({ toc: [...allToc, ...userTocLines], subjects: allSubjects, userNotes: [notes, userSummary].filter(Boolean).join("\n") });
+    const subjectCandidates = bookMetadata.sources.flatMap((source) =>
+      source.subjects.map((text) => ({ text, sourceUrl: source.sourceUrl }))
+    );
+    const candidates = generateConceptCandidates({
+      toc: [...tocCandidates, ...userTocLines],
+      subjects: subjectCandidates,
+      userNotes: [notes, userSummary].filter(Boolean).join("\n"),
+    });
     tocCount = tocLineCount([...allToc, ...userTocLines]);
     await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, searchQuality, targetCount });
 
@@ -465,7 +482,7 @@ ${notes.trim() || "(No user notes provided.)"}`);
   const allToc: string[] = [];
   for (const src of bookMetadata.sources) {
     if (src.tableOfContents.length > 0) {
-      allToc.push(`- source: ${src.source}\n${src.tableOfContents.map((item) => `  - ${item}`).join("\n")}`);
+      allToc.push(`- source: ${src.source}${formatSourceUrl(src.sourceUrl)}\n${src.tableOfContents.map((item) => `  - ${item}`).join("\n")}`);
     }
   }
   const userTocLines = splitUserToc(userToc);
@@ -479,7 +496,7 @@ ${allToc.length > 0 ? allToc.join("\n") : "(No table of contents found.)"}`);
   const descParts: string[] = [];
   for (const src of bookMetadata.sources) {
     if (src.description.trim()) {
-      descParts.push(`- source: ${src.source}\n${src.description.trim()}`);
+      descParts.push(`- source: ${src.source}${formatSourceUrl(src.sourceUrl)}\n${src.description.trim()}`);
     }
   }
   if (userSummary.trim()) {
@@ -488,17 +505,30 @@ ${allToc.length > 0 ? allToc.join("\n") : "(No table of contents found.)"}`);
   parts.push(`[Descriptions]
 ${descParts.length > 0 ? descParts.join("\n\n") : "(No descriptions found.)"}`);
 
+  const reviewParts: string[] = [];
+  for (const src of bookMetadata.sources) {
+    if (src.review?.trim()) {
+      reviewParts.push(`- source: ${src.source}${formatSourceUrl(src.sourceUrl)}\n${src.review.trim()}`);
+    }
+  }
+  parts.push(`[Reviews]
+${reviewParts.length > 0 ? reviewParts.join("\n\n") : "(No reviews found.)"}`);
+
   // Subjects/categories per source
   const subjectParts: string[] = [];
   for (const src of bookMetadata.sources) {
     if (src.subjects.length > 0) {
-      subjectParts.push(`- source: ${src.source}: ${src.subjects.join(", ")}`);
+      subjectParts.push(`- source: ${src.source}${formatSourceUrl(src.sourceUrl)}: ${src.subjects.join(", ")}`);
     }
   }
   parts.push(`[Subjects / Categories]
 ${subjectParts.length > 0 ? subjectParts.join("\n") : "(No subjects found.)"}`);
 
   return parts.join("\n\n");
+}
+
+function formatSourceUrl(sourceUrl: string | null): string {
+  return sourceUrl ? `\n  Source URL: ${sourceUrl}` : "";
 }
 
 function measureSourceQuality({

@@ -192,6 +192,7 @@ SOURCE-GROUNDING RULES (highest priority):
 - Do not import concepts from other books, previous analyses, existing map concepts, or unrelated general knowledge.
 - Do not infer concepts from the book's reputation or what it "probably covers" — only from the actual source text provided.
 - For each concept, record groundingType and evidenceText.
+- When a source section includes "Source URL:", evidenceText must include that URL together with the source phrase.
 - groundingType:
   - source_explicit: the exact concept name or close equivalent appears in the source
   - source_supported: directly supported by a source phrase, heading, subject, review, user field, or description
@@ -237,6 +238,7 @@ Candidate metadata:
   - outcome: result, benefit, effect, goal
   - context: background, problem framing, precondition, audience, domain context
 - groundingType and evidenceText are required for every candidate.
+- evidenceText must preserve the source URL when the evidence came from a web-fetched source.
 - importance: 1-5, centrality to the book.
 - specificity: 1-5, concept specificity.
 - confidence: 0-1, confidence this should remain in the raw candidate pool.
@@ -307,12 +309,12 @@ ${candidates.length > 0 ? `1. You have been given ${candidates.length} pre-extra
    - Do NOT aggressively deduplicate. This is a raw candidate stage; near-duplicates are acceptable if they have different evidence.
 2. After processing all valid candidates, add additional concepts that are grounded in the source material (descriptions, TOC, reviews, subjects/categories, or user-provided fields) but not already covered by the candidates.
 3. Do NOT add concepts from other books, prior analyses, or unrelated general knowledge.
-4. For each concept, set groundingType and evidenceText.` : `1. Read the source material carefully.
+4. For each concept, set groundingType and evidenceText. If evidence came from a web source, include its Source URL in evidenceText.` : `1. Read the source material carefully.
 2. Identify the organizing axis: field, central topic, named theories, chapter structure, key terms.
 3. Extract concepts that are explicitly named in the source first.
 4. Candidate expansion warning: decomposition is NOT the primary route. Only decompose a broad source term (e.g. "脳内物質", "microeconomics", "zero trust") when the source explicitly mentions that umbrella term AND the decomposition is canonical for the field.
 5. Do not add concepts from other books, prior analyses, or unrelated general knowledge.
-6. For each concept, set groundingType and evidenceText.`}
+6. For each concept, set groundingType and evidenceText. If evidence came from a web source, include its Source URL in evidenceText.`}
 
 Noise to exclude (do NOT create concepts for these):
 - Marketing copy: "ベストセラー", "不朽の名著", "感動の書", "公式本"
@@ -363,7 +365,7 @@ function normalizeExtractedConcept(
     ? concept.groundingType as GroundingType
     : "model_prior";
   const specificityScore = clampImportance(concept.specificity ?? 3);
-  const evidenceText = concept.evidenceText?.trim() ?? "";
+  const evidenceText = attachSourceUrlToEvidence(concept.evidenceText?.trim() ?? "", sourceText);
   const groundingType = verifyGroundingType(claimedGroundingType, evidenceText, sourceText, metadataText);
 
   return {
@@ -409,10 +411,35 @@ function splitSourceAndMetadataText(text: string): { sourceText: string; metadat
   };
 }
 
+function attachSourceUrlToEvidence(evidenceText: string, sourceText: string): string {
+  if (!evidenceText || extractEvidenceUrl(evidenceText)) return evidenceText;
+
+  const evidence = normalizeEvidence(evidenceText);
+  if (!evidence) return evidenceText;
+
+  for (const block of sourceText.split(/\n(?=- source: )/)) {
+    if (!normalizeEvidence(block).includes(evidence)) continue;
+    const sourceUrl = block.match(/Source URL:\s*(https?:\/\/\S+)/i)?.[1];
+    return sourceUrl ? `${evidenceText} [Source URL: ${sourceUrl}]` : evidenceText;
+  }
+
+  return evidenceText;
+}
+
 function sourceIncludesEvidence(sourceText: string, evidenceText: string): boolean {
   const evidence = normalizeEvidence(evidenceText);
   if (!evidence) return false;
-  return normalizeEvidence(sourceText).includes(evidence);
+  const source = normalizeEvidence(sourceText);
+  if (source.includes(evidence)) return true;
+
+  const url = extractEvidenceUrl(evidenceText);
+  if (!url) return false;
+  const phrase = normalizeEvidence(evidenceText.replace(url, "").replace(/\[?source url:?\]?/ig, ""));
+  return source.includes(normalizeEvidence(url)) && Boolean(phrase) && source.includes(phrase);
+}
+
+function extractEvidenceUrl(value: string): string | null {
+  return value.match(/https?:\/\/[^\s\])}>"']+/i)?.[0] ?? null;
 }
 
 function normalizeEvidence(value: string): string {

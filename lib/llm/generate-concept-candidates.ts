@@ -6,6 +6,11 @@ export interface ConceptCandidate {
   evidenceText: string;
 }
 
+export interface EvidenceLine {
+  text: string;
+  sourceUrl?: string | null;
+}
+
 const NOISE_PATTERNS = [
   /公式本/,
   /改訂版/,
@@ -91,8 +96,8 @@ export function generateConceptCandidates({
   subjects,
   userNotes,
 }: {
-  toc: string[];
-  subjects: string[];
+  toc: Array<string | EvidenceLine>;
+  subjects: Array<string | EvidenceLine>;
   userNotes: string;
 }): ConceptCandidate[] {
   const seen = new Set<string>();
@@ -105,15 +110,17 @@ export function generateConceptCandidates({
     candidates.push({ text: text.trim(), sourceType, evidenceText: evidenceText.trim() });
   }
 
-  for (const line of toc) {
+  for (const item of toc) {
+    const { text: line, sourceUrl } = normalizeEvidenceLine(item);
     const terms = extractFromTocLine(line);
     for (const term of terms) {
-      add(term, "table_of_contents", line);
+      add(term, "table_of_contents", evidenceWithUrl(line, sourceUrl));
     }
   }
 
-  for (const subject of subjects) {
-    add(subject, "ndl_subjects", subject);
+  for (const item of subjects) {
+    const { text: subject, sourceUrl } = normalizeEvidenceLine(item);
+    add(subject, "ndl_subjects", evidenceWithUrl(subject, sourceUrl));
   }
 
   if (userNotes) {
@@ -126,6 +133,14 @@ export function generateConceptCandidates({
   }
 
   return candidates;
+}
+
+function normalizeEvidenceLine(item: string | EvidenceLine): EvidenceLine {
+  return typeof item === "string" ? { text: item } : item;
+}
+
+function evidenceWithUrl(text: string, sourceUrl?: string | null): string {
+  return sourceUrl ? `${text} [Source URL: ${sourceUrl}]` : text;
 }
 
 export function tocLineCount(toc: string[]): number {
