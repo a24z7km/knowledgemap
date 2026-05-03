@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { books, concepts, bookConcepts, conceptRelations, extractionRuns, rawConcepts } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { extractConcepts } from "@/lib/llm/extract-concepts";
+import type { TargetCount } from "@/lib/llm/extract-concepts";
 import { extractRelations } from "@/lib/llm/extract-relations";
 import {
   extractCrossBookRelations,
@@ -44,6 +45,8 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
   let clusteredCount = 0;
   let promotedCount = 0;
   let droppedReasons: string[] = [];
+  let sourceQuality: SourceQuality | null = null;
+  let targetCount: TargetCount = { min: 12, max: 30 };
 
   try {
     const [run] = await db
@@ -52,7 +55,7 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
         bookId,
         model,
         status: "running",
-        sourceStats: JSON.stringify(buildSourceStats({ tocCount, rawCount, clusteredCount, promotedCount, droppedReasons })),
+        sourceStats: JSON.stringify(buildSourceStats({ tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount })),
       })
       .returning({ id: extractionRuns.id });
     extractionRunId = run.id;
@@ -83,14 +86,36 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
 
     // Step 2: Build structured extraction context (current book only — no existing concepts).
     const bookMetadata = await fetchBookMetadata(title, author);
+    sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes });
+    targetCount = targetCountForSourceQuality(sourceQuality);
     const enrichedNotes = buildExtractionSource({ title, author, notes, bookMetadata });
+    sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes, sourceText: enrichedNotes });
+
+    if (sourceQuality.meaningfulChars < 200) {
+      droppedReasons = [
+        ...droppedReasons,
+        `insufficient_source: meaningfulChars=${sourceQuality.meaningfulChars} (<200)`,
+      ];
+      await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount });
+      await finishExtractionRun(
+        extractionRunId,
+        "failed",
+        { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount },
+        "insufficient_source"
+      );
+      await db
+        .update(books)
+        .set({ analyzeStatus: "failed", analyzeError: "insufficient_source" })
+        .where(eq(books.id, bookId));
+      return;
+    }
 
     // Step 3: Pre-generate concept candidates from TOC / subjects / user notes
     const allToc = bookMetadata.sources.flatMap((s) => s.tableOfContents);
     const allSubjects = bookMetadata.sources.flatMap((s) => s.subjects);
     const candidates = generateConceptCandidates({ toc: allToc, subjects: allSubjects, userNotes: notes });
     tocCount = tocLineCount(allToc);
-    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
+    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount });
 
     if (isCancellationRequested(bookId)) {
       await finishExtractionRun(extractionRunId, "cancelled", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
@@ -99,7 +124,7 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     }
 
     // Step 4: Extract concepts (LLM enriches candidates rather than extracting freely)
-    const rawExtracted = await extractConcepts(title, author, enrichedNotes, model, candidates);
+    const rawExtracted = await extractConcepts(title, author, enrichedNotes, model, candidates, targetCount);
     rawCount = rawExtracted.length;
     if (rawExtracted.length > 0) {
       await db.insert(rawConcepts).values(rawExtracted.map((concept, index) => ({
@@ -129,7 +154,7 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     droppedReasons = scored
       .filter((item) => item.status === "rejected" && item.droppedReason)
       .map((item) => `${item.concept.name}: ${item.droppedReason}`);
-    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
+    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount });
 
     // Step 5: Quality check
     const qualityWarnings = checkConceptQuality(extracted, tocCount);
@@ -141,10 +166,12 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
         clusteredCount,
         promotedCount,
         droppedReasons,
+        sourceQuality,
+        targetCount,
       }, `Concept extraction quality check failed: ${qualityWarnings.warnings.join("; ")}`);
       throw new Error(`Concept extraction quality check failed: ${qualityWarnings.warnings.join("; ")}`);
     }
-    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
+    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount });
 
     if (isCancellationRequested(bookId)) {
       await finishExtractionRun(extractionRunId, "cancelled", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
@@ -241,7 +268,7 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
         });
       }
     }
-    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
+    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount });
 
     if (isCancellationRequested(bookId)) {
       await finishExtractionRun(extractionRunId, "cancelled", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
@@ -297,12 +324,12 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     await saveCrossBookRelations(crossBookRelations, crossBookContext);
 
     await db.update(books).set({ analyzeStatus: "done" }).where(eq(books.id, bookId));
-    await finishExtractionRun(extractionRunId, "completed", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
+    await finishExtractionRun(extractionRunId, "completed", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount });
   } catch (err) {
     await finishExtractionRun(
       extractionRunId,
       "failed",
-      { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons },
+      { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount },
       String(err)
     );
     await db
@@ -318,6 +345,16 @@ interface ExtractionSourceStats {
   clusteredCount: number;
   promotedCount: number;
   droppedReasons: string[];
+  sourceQuality?: SourceQuality | null;
+  targetCount?: TargetCount;
+}
+
+interface SourceQuality {
+  descriptionChars: number;
+  tocLines: number;
+  userNoteChars: number;
+  meaningfulChars: number;
+  sourceTextChars?: number;
 }
 
 function buildSourceStats(stats: ExtractionSourceStats) {
@@ -327,6 +364,8 @@ function buildSourceStats(stats: ExtractionSourceStats) {
     clusteredCount: stats.clusteredCount,
     promotedCount: stats.promotedCount,
     droppedReasons: stats.droppedReasons,
+    sourceQuality: stats.sourceQuality ?? null,
+    targetCount: stats.targetCount ?? null,
   };
 }
 
@@ -428,6 +467,34 @@ ${descParts.length > 0 ? descParts.join("\n\n") : "(No descriptions found.)"}`);
 ${subjectParts.length > 0 ? subjectParts.join("\n") : "(No subjects found.)"}`);
 
   return parts.join("\n\n");
+}
+
+function measureSourceQuality({
+  bookMetadata,
+  userNotes,
+  sourceText,
+}: {
+  bookMetadata: import("@/lib/metadata/fetch-book-metadata").BookMetadata;
+  userNotes: string;
+  sourceText?: string;
+}): SourceQuality {
+  const descriptionChars = bookMetadata.sources.reduce((sum, source) => sum + source.description.trim().length, 0);
+  const tocLines = tocLineCount(bookMetadata.sources.flatMap((source) => source.tableOfContents));
+  const userNoteChars = userNotes.trim().length;
+
+  return {
+    descriptionChars,
+    tocLines,
+    userNoteChars,
+    meaningfulChars: descriptionChars + tocLines * 20 + userNoteChars,
+    sourceTextChars: sourceText?.length,
+  };
+}
+
+function targetCountForSourceQuality(sourceQuality: SourceQuality): TargetCount {
+  if (sourceQuality.meaningfulChars < 600) return { min: 3, max: 12 };
+  if (sourceQuality.meaningfulChars < 1200) return { min: 8, max: 20 };
+  return { min: 12, max: 30 };
 }
 
 

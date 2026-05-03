@@ -31,13 +31,29 @@ interface GoogleBooksVolume {
 
 async function fetchGoogleBooks(title: string, author: string): Promise<{ meta: Partial<BookMetadata>; source: MetadataSource } | null> {
   try {
-    const q = encodeURIComponent(`intitle:${title} inauthor:${author}`);
-    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=1&langRestrict=ja`, {
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json() as { items?: GoogleBooksVolume[] };
-    const info = data.items?.[0]?.volumeInfo;
+    const queries = [
+      `intitle:${title} inauthor:${author}`,
+      `intitle:${title}`,
+      [title, author].filter(Boolean).join(" "),
+    ];
+
+    let volumes: GoogleBooksVolume[] = [];
+    for (const query of queries) {
+      const q = encodeURIComponent(query);
+      const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${q}&maxResults=5`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) continue;
+
+      const data = await res.json() as { items?: GoogleBooksVolume[] };
+      volumes = data.items ?? [];
+      if (volumes.length > 0) break;
+    }
+
+    const info = volumes
+      .map((volume) => volume.volumeInfo)
+      .filter((volumeInfo): volumeInfo is NonNullable<GoogleBooksVolume["volumeInfo"]> => Boolean(volumeInfo))
+      .sort((a, b) => (b.description?.length ?? 0) - (a.description?.length ?? 0))[0];
     if (!info) return null;
 
     const identifiers = info.industryIdentifiers ?? [];

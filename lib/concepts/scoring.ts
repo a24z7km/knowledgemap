@@ -29,6 +29,20 @@ const GENERIC_BLOCKLIST = new Set([
   "management",
   "happiness",
   "purpose",
+  "selfmanagement",
+  "selfdiscipline",
+  "willpower",
+  "decisionmaking",
+  "goalsetting",
+  "timemanagement",
+  "responsibility",
+  "personalgrowth",
+  "lifevision",
+  "lifeprinciples",
+  "continuousimprovement",
+  "changemanagement",
+  "habitformation",
+  "prioritization",
   "成功",
   "成長",
   "リーダーシップ",
@@ -37,6 +51,20 @@ const GENERIC_BLOCKLIST = new Set([
   "自己啓発",
   "幸福",
   "目的",
+  "自己管理",
+  "自己規律",
+  "意志力",
+  "意思決定",
+  "目標設定",
+  "時間管理",
+  "責任",
+  "個人成長",
+  "人生ビジョン",
+  "人生の原則",
+  "継続的改善",
+  "変革管理",
+  "習慣形成",
+  "優先順位付け",
 ]);
 
 const GROUNDING_WEIGHTS: Record<GroundingType, number> = {
@@ -73,9 +101,8 @@ export function scoreConceptCandidates<T extends ScoreableConcept>(concepts: T[]
   const eligible = scored
     .filter((item) => item.status !== "rejected")
     .sort((a, b) => b.finalScore - a.finalScore);
-  const topTwelve = new Set(eligible.slice(0, 12));
   const promoted = eligible
-    .filter((item) => item.finalScore >= 0.5 || topTwelve.has(item))
+    .filter((item) => item.finalScore >= 0.5)
     .slice(0, 30);
   const promotedSet = new Set(promoted);
 

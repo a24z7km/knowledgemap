@@ -61,19 +61,25 @@ interface LlmExtractedConcept {
   confidence?: number;
 }
 
-const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
-  type: "function",
-  function: {
-    name: "save_concepts",
-    description: "Save extracted concepts from the book",
-    parameters: {
-      type: "object",
-      properties: {
-        concepts: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
+export interface TargetCount {
+  min: number;
+  max: number;
+}
+
+function buildConceptTool(targetCount: TargetCount): OpenAI.ChatCompletionTool {
+  return {
+    type: "function",
+    function: {
+      name: "save_concepts",
+      description: "Save extracted concepts from the book",
+      parameters: {
+        type: "object",
+        properties: {
+          concepts: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
               name: {
                 type: "string",
                 description:
@@ -130,36 +136,38 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
                 maximum: 1,
                 description: "Confidence that this is a useful concept candidate grounded in the source",
               },
+              },
+              required: [
+                "name",
+                "nameJa",
+                "description",
+                "importance",
+                "excerpt",
+                "domain",
+                "category",
+                "groundingType",
+                "evidenceText",
+                "specificity",
+                "confidence",
+              ],
             },
-            required: [
-              "name",
-              "nameJa",
-              "description",
-              "importance",
-              "excerpt",
-              "domain",
-              "category",
-              "groundingType",
-              "evidenceText",
-              "specificity",
-              "confidence",
-            ],
+            minItems: targetCount.min,
+            maxItems: targetCount.max,
           },
-          minItems: 30,
-          maxItems: 100,
         },
+        required: ["concepts"],
       },
-      required: ["concepts"],
     },
-  },
-};
+  };
+}
 
 export async function extractConcepts(
   title: string,
   author: string,
   notes: string,
   model = "gpt-4o-mini",
-  candidates: ConceptCandidate[] = []
+  candidates: ConceptCandidate[] = [],
+  targetCount: TargetCount = { min: 12, max: 30 }
 ): Promise<ExtractedConcept[]> {
   const candidateBlock =
     candidates.length > 0
@@ -172,7 +180,7 @@ export async function extractConcepts(
   const response = await chatWithRetry({
     model,
     max_completion_tokens: 8192,
-    tools: [CONCEPT_TOOL],
+    tools: [buildConceptTool(targetCount)],
     tool_choice: { type: "function", function: { name: "save_concepts" } },
     messages: [
       {
@@ -193,11 +201,12 @@ SOURCE-GROUNDING RULES (highest priority):
 - specificity is numeric 1-5: 5=book-specific/chapter-level/named term, 3=domain-specific, 1=generic.
 
 VOLUME RULES:
-- Do not be selective in this call. This is the candidate-generation stage.
-- Return at least 30 candidates whenever there is enough source material.
+- This is the candidate-generation stage, but the source material controls volume.
+- Target ${targetCount.min}-${targetCount.max} grounded candidates when the source supports that many.
+- If there are fewer than ${targetCount.min} genuinely grounded candidates, return only the grounded candidates you can support.
+- Filler is forbidden. Do not pad the output with generic concepts or book-reputation guesses.
 - If the source contains a table of contents or candidate list, process it broadly instead of choosing only the top few.
-- It is better to return a noisy but grounded candidate pool than to under-extract.
-- Do not stop at 2-10 concepts. Aim for 30-100 raw candidates; later pipeline stages will cluster and score.
+- It is better to return a small grounded candidate pool than a large ungrounded one.
 
 Primary extraction goal:
 - First identify the organizing axis of the book from its title, subtitle, description, categories, and table of contents.
@@ -324,7 +333,7 @@ Prefer specific domain terms over generic labels:
 - "Opportunity Cost", "Demand Curve", "Marginal Utility" over only "Decision Making"
 - "Zero Trust", "Authentication", "Threat Modeling" over only "Risk Management"
 
-Return at least 30 candidates if there is enough source material. Do not under-extract. If there are fewer than 30 genuinely grounded candidates, return all grounded candidates and avoid invented filler. Generic concepts must stay under 20%.`,
+Return ${targetCount.min}-${targetCount.max} candidates if there is enough source material. If there are fewer than ${targetCount.min} genuinely grounded candidates, return all grounded candidates and avoid invented filler. Generic concepts must stay under 20%.`,
       },
     ],
   });
@@ -335,23 +344,24 @@ Return at least 30 candidates if there is enough source material. Do not under-e
   }
 
   const input = JSON.parse(toolCall.function.arguments) as { concepts: LlmExtractedConcept[] };
-  const all = normalizeExtractedConcepts(input.concepts ?? []);
+  const all = normalizeExtractedConcepts(input.concepts ?? [], notes);
   return all;
 }
 
-function normalizeExtractedConcepts(concepts: LlmExtractedConcept[]): ExtractedConcept[] {
-  return concepts.map(normalizeExtractedConcept).filter((concept) => concept.name.length > 0);
+function normalizeExtractedConcepts(concepts: LlmExtractedConcept[], sourceText: string): ExtractedConcept[] {
+  return concepts.map((concept) => normalizeExtractedConcept(concept, sourceText)).filter((concept) => concept.name.length > 0);
 }
 
-function normalizeExtractedConcept(concept: LlmExtractedConcept): ExtractedConcept {
+function normalizeExtractedConcept(concept: LlmExtractedConcept, sourceText: string): ExtractedConcept {
   const category = EXTRACTION_CATEGORIES.includes(concept.category as ExtractionCategory)
     ? concept.category as ExtractionCategory
     : "context";
-  const groundingType = GROUNDING_TYPES.includes(concept.groundingType as GroundingType)
+  const claimedGroundingType = GROUNDING_TYPES.includes(concept.groundingType as GroundingType)
     ? concept.groundingType as GroundingType
     : "source_implied";
   const specificityScore = clampImportance(concept.specificity ?? 3);
   const evidenceText = concept.evidenceText?.trim() ?? "";
+  const groundingType = verifyGroundingType(claimedGroundingType, evidenceText, sourceText);
 
   return {
     name: concept.name?.trim() ?? "",
@@ -370,6 +380,22 @@ function normalizeExtractedConcept(concept: LlmExtractedConcept): ExtractedConce
     specificity: scoreToSpecificity(specificityScore, groundingType),
     sourceEvidence: { sourceType: "google_books_description", evidenceText },
   };
+}
+
+function verifyGroundingType(groundingType: GroundingType, evidenceText: string, sourceText: string): GroundingType {
+  if (/^(Title|Author):/i.test(evidenceText.trim())) return "model_prior";
+  if (groundingType === "source_explicit" && !sourceIncludesEvidence(sourceText, evidenceText)) return "model_prior";
+  return groundingType;
+}
+
+function sourceIncludesEvidence(sourceText: string, evidenceText: string): boolean {
+  const evidence = normalizeEvidence(evidenceText);
+  if (!evidence) return false;
+  return normalizeEvidence(sourceText).includes(evidence);
+}
+
+function normalizeEvidence(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function clampImportance(value: number): 1 | 2 | 3 | 4 | 5 {
