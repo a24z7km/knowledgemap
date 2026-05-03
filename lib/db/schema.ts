@@ -21,6 +21,7 @@ export const books = sqliteTable("books", {
   userKeywords: text("user_keywords"),
   userQuotes: text("user_quotes"),
   step1CompletedAt: text("step1_completed_at"),
+  step1Model: text("step1_model"),
   analyzeStatus: text("analyze_status", { enum: ["pending", "analyzing", "done", "error", "failed"] }).notNull().default("pending"),
   analyzeError: text("analyze_error"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),

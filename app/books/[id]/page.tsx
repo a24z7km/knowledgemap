@@ -382,10 +382,16 @@ export default function BookDetailPage() {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-sm flex items-center gap-2">
+            <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
               <span className="font-bold text-xs bg-muted px-2 py-0.5 rounded">Step 1</span>
               キーワード収集
               {step1Done && <span className="text-xs text-green-600 font-normal">✓ 完了</span>}
+              {book.step1CompletedAt && (
+                <span className="text-[10px] text-muted-foreground font-normal">
+                  {fmtDate(book.step1CompletedAt)}
+                  {book.step1Model && <> · {book.step1Model}</>}
+                </span>
+              )}
             </CardTitle>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -515,10 +521,16 @@ export default function BookDetailPage() {
       <Card className={!step1Done ? "opacity-60" : ""}>
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-sm flex items-center gap-2">
+            <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
               <span className="font-bold text-xs bg-muted px-2 py-0.5 rounded">Step 2</span>
               概念・関係の抽出
               {book.analyzeStatus === "done" && <span className="text-xs text-green-600 font-normal">✓ 完了</span>}
+              {latestExtractionRun?.completedAt && (
+                <span className="text-[10px] text-muted-foreground font-normal">
+                  {fmtDate(latestExtractionRun.completedAt)}
+                  {latestExtractionRun.model && <> · {latestExtractionRun.model}</>}
+                </span>
+              )}
             </CardTitle>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -586,6 +598,10 @@ export default function BookDetailPage() {
 
     </div>
   );
+}
+
+function fmtDate(iso: string) {
+  return new Date(iso).toLocaleString("ja-JP", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function formatSourceQualityHint(run: ExtractionRun | null) {

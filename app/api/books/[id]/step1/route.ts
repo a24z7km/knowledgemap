@@ -15,6 +15,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const body = await req.json().catch(() => ({}));
   const clearExisting: boolean = body.clear ?? false;
+  const model: string = body.model ?? "gpt-4o-mini";
 
   if (clearExisting) {
     await db.delete(bookKeywordDrafts).where(eq(bookKeywordDrafts.bookId, bookId));
@@ -105,7 +106,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   // Mark Step 1 as completed
-  await db.update(books).set({ step1CompletedAt: new Date().toISOString() }).where(eq(books.id, bookId));
+  await db.update(books).set({ step1CompletedAt: new Date().toISOString(), step1Model: model }).where(eq(books.id, bookId));
 
   const allDrafts = await db.select().from(bookKeywordDrafts).where(eq(bookKeywordDrafts.bookId, bookId));
 

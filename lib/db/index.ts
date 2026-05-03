@@ -572,6 +572,9 @@ function ensureBookStep1Columns(sqlite: Database.Database) {
   if (!columnNames.has("step1_completed_at")) {
     sqlite.exec("ALTER TABLE books ADD COLUMN step1_completed_at TEXT");
   }
+  if (!columnNames.has("step1_model")) {
+    sqlite.exec("ALTER TABLE books ADD COLUMN step1_model TEXT");
+  }
 }
 
 function ensureBookKeywordDraftsTable(sqlite: Database.Database) {
