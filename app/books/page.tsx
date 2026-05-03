@@ -100,15 +100,31 @@ export default function BooksPage() {
     setBulkAnalyzing(true);
     setSelectedIds(new Set());
     for (const book of targets) {
-      await fetch(`/api/analyze/${book.id}`, {
+      // Step 1: キーワード収集（完了まで待つ）
+      toast.info(`「${book.title}」Step 1 収集中...`);
+      const s1 = await fetch(`/api/books/${book.id}/step1`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model }),
       });
-      toast.info(`「${book.title}」の解析を開始`);
+      if (!s1.ok) {
+        toast.error(`「${book.title}」Step 1 失敗`);
+        load();
+        continue;
+      }
+
+      // Step 2: 概念抽出を開始（非同期ジョブ）
+      const s2 = await fetch(`/api/analyze/${book.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+      if (s2.ok) {
+        toast.info(`「${book.title}」Step 2 抽出開始`);
+      } else {
+        toast.error(`「${book.title}」Step 2 開始失敗`);
+      }
       load();
-      // brief pause between requests
-      await new Promise((r) => setTimeout(r, 300));
     }
     setBulkAnalyzing(false);
   };
@@ -252,14 +268,26 @@ export default function BooksPage() {
 
   // ── Analyze / Delete ───────────────────────────────────────────
   const analyze = async (book: BookListItem) => {
-    const res = await fetch(`/api/analyze/${book.id}`, {
+    // Step 1
+    toast.info(`「${book.title}」Step 1 収集中...`);
+    const s1 = await fetch(`/api/books/${book.id}/step1`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model }),
     });
-    if (res.ok) {
-      toast.info(`「${book.title}」の解析を開始しました（${model}）`);
+    if (!s1.ok) { toast.error(`「${book.title}」Step 1 失敗`); return; }
+
+    // Step 2
+    const s2 = await fetch(`/api/analyze/${book.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+    if (s2.ok) {
+      toast.info(`「${book.title}」Step 2 抽出開始（${model}）`);
       load();
+    } else {
+      toast.error(`「${book.title}」Step 2 開始失敗`);
     }
   };
 
