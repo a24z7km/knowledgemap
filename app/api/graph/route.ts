@@ -42,8 +42,8 @@ export async function GET(req: Request) {
     const filteredRelations = allRelations.filter((relation) => {
       if (!conceptIdSet.has(relation.fromConceptId) || !conceptIdSet.has(relation.toConceptId)) return false;
       const confidence = relation.confidence ?? 0.5;
-      if (mapFilter === "core") return confidence >= 0.7 && relation.source !== "fallback";
-      return confidence >= 0.5;
+      if (mapFilter === "core") return relation.confidence == null || confidence >= 0.5;
+      return true;
     });
     const visibleConcepts = mapFilter === "all_concepts"
       ? filteredConcepts
