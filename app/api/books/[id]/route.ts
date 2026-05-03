@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { books, bookConcepts, concepts, extractionRuns } from "@/lib/db/schema";
-import { desc, eq } from "drizzle-orm";
+import { books, bookConcepts, concepts, extractionRuns, conceptRelations } from "@/lib/db/schema";
+import { desc, eq, sql } from "drizzle-orm";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -16,8 +16,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       .orderBy(desc(extractionRuns.createdAt))
       .limit(1);
 
-    const bcs = await db
-      .select({
+    const [bcs, relCountRow] = await Promise.all([
+      db.select({
         id: bookConcepts.id,
         importance: bookConcepts.importance,
         excerpt: bookConcepts.excerpt,
@@ -29,11 +29,21 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         conceptDomain: concepts.domain,
         conceptDescription: concepts.description,
       })
-      .from(bookConcepts)
-      .innerJoin(concepts, eq(bookConcepts.conceptId, concepts.id))
-      .where(eq(bookConcepts.bookId, Number(id)));
+        .from(bookConcepts)
+        .innerJoin(concepts, eq(bookConcepts.conceptId, concepts.id))
+        .where(eq(bookConcepts.bookId, Number(id))),
+      db.select({ count: sql<number>`count(*)` })
+        .from(conceptRelations)
+        .where(eq(conceptRelations.bookId, Number(id))),
+    ]);
 
-    return NextResponse.json({ book, concepts: bcs, latestExtractionRun: latestExtractionRun ?? null });
+    return NextResponse.json({
+      book,
+      concepts: bcs,
+      latestExtractionRun: latestExtractionRun ?? null,
+      conceptCount: bcs.length,
+      relationCount: relCountRow[0]?.count ?? 0,
+    });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

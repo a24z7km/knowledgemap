@@ -144,6 +144,7 @@ export default function BookDetailPage() {
   const [book, setBook] = useState<Book | null>(null);
   const [concepts, setConcepts] = useState<ConceptRow[]>([]);
   const [latestExtractionRun, setLatestExtractionRun] = useState<ExtractionRun | null>(null);
+  const [relationCount, setRelationCount] = useState<number>(0);
   const [drafts, setDrafts] = useState<BookKeywordDraft[]>([]);
 
   const [step1Model, setStep1Model] = useState("gpt-4o-mini");
@@ -172,6 +173,7 @@ export default function BookDetailPage() {
         setBook(data.book);
         setConcepts(data.concepts ?? []);
         setLatestExtractionRun(data.latestExtractionRun ?? null);
+        setRelationCount(data.relationCount ?? 0);
         if (!sourceDirtyRef.current) {
           setSourceForm({
             notes:       data.book.notes        ?? "",
@@ -563,6 +565,11 @@ export default function BookDetailPage() {
                 <span className="text-[10px] text-muted-foreground font-normal">
                   {fmtDate(latestExtractionRun.completedAt)}
                   {latestExtractionRun.model && <> · {latestExtractionRun.model}</>}
+                </span>
+              )}
+              {concepts.length > 0 && (
+                <span className="text-[10px] text-muted-foreground font-normal">
+                  概念 {concepts.length} · 関係 {relationCount}
                 </span>
               )}
             </CardTitle>

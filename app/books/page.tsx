@@ -48,6 +48,8 @@ const EMPTY_FORM = { title: "", author: "", readStatus: "read", notes: "" };
 
 interface BookListItem extends Book {
   latestExtractionRun?: ExtractionRun | null;
+  conceptCount?: number;
+  relationCount?: number;
 }
 
 export default function BooksPage() {
@@ -555,6 +557,13 @@ export default function BooksPage() {
                   error={book.latestExtractionRun?.error}
                 />
               </div>
+
+              {(book.conceptCount ?? 0) > 0 && (
+                <div className="flex gap-3 text-xs text-muted-foreground">
+                  <span>概念 <span className="font-medium text-foreground">{book.conceptCount}</span></span>
+                  <span>関係 <span className="font-medium text-foreground">{book.relationCount ?? 0}</span></span>
+                </div>
+              )}
 
               <div className="flex items-center justify-between pt-1">
                 <Badge variant={ANALYZE_MAP[book.analyzeStatus].color} className="text-xs">

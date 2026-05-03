@@ -344,6 +344,10 @@ function MapContent() {
       <div className="flex-1 relative">
         {/* Filters */}
         <div className="absolute top-3 left-3 z-10 flex flex-wrap items-start gap-2 bg-background/90 backdrop-blur rounded-lg p-2 shadow-sm border max-w-[min(760px,calc(100%-1.5rem))]">
+          <span className="text-xs text-muted-foreground self-center px-1">
+            概念 <span className="font-medium text-foreground">{displayedGraph.nodes.length}</span>
+            {" / "}関係 <span className="font-medium text-foreground">{displayedGraph.edges.length}</span>
+          </span>
           <Select value={domain} onValueChange={(v) => setDomain(v ?? "all")}>
             <SelectTrigger className="w-36 h-8 text-xs">
               <SelectValue />
