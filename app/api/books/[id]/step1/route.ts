@@ -109,5 +109,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const allDrafts = await db.select().from(bookKeywordDrafts).where(eq(bookKeywordDrafts.bookId, bookId));
 
-  return NextResponse.json({ drafts: allDrafts, count: allDrafts.length });
+  // Aggregate LLM-collected content for form pre-fill suggestions
+  const allSources = [...bookMetadata.sources, ...webSources];
+  const tocLines = allSources.flatMap((s) => s.tableOfContents).filter(Boolean);
+  const descriptions = allSources
+    .flatMap((s) => [s.description?.trim(), s.review?.trim()])
+    .filter(Boolean) as string[];
+  const subjects = allSources.flatMap((s) => s.subjects).filter(Boolean);
+
+  const suggestedToc = [...new Set(tocLines)].join("\n");
+  const suggestedSummary = [...new Set(descriptions)].join("\n\n");
+  const suggestedKeywords = [...new Set(subjects)].join(", ");
+
+  return NextResponse.json({
+    drafts: allDrafts,
+    count: allDrafts.length,
+    suggestedToc,
+    suggestedSummary,
+    suggestedKeywords,
+  });
 }

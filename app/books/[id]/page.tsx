@@ -223,7 +223,31 @@ export default function BookDetailPage() {
         body: JSON.stringify({ clear, model: step1Model }),
       });
       if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
+      const data = await res.json() as {
+        count: number;
+        suggestedToc?: string;
+        suggestedSummary?: string;
+        suggestedKeywords?: string;
+      };
+
+      // フィールドが空のときだけ LLM 収集データを自動入力
+      setSourceForm((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        if (!prev.userToc.trim() && data.suggestedToc) { next.userToc = data.suggestedToc; changed = true; }
+        if (!prev.userSummary.trim() && data.suggestedSummary) { next.userSummary = data.suggestedSummary; changed = true; }
+        if (!prev.userKeywords.trim() && data.suggestedKeywords) { next.userKeywords = data.suggestedKeywords; changed = true; }
+        if (changed) {
+          // stale closure を避けるため next の値で直接 PATCH
+          fetch(`/api/books/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(next),
+          }).catch(() => undefined);
+        }
+        return next;
+      });
+
       toast.success(`Step 1 完了: ${data.count} 件収集しました`);
       await load();
       await loadDrafts();
