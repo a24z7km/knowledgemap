@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { books, concepts, bookConcepts, conceptRelations, extractionRuns } from "@/lib/db/schema";
+import { books, concepts, bookConcepts, conceptRelations, extractionRuns, rawConcepts } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { extractConcepts } from "@/lib/llm/extract-concepts";
 import { extractRelations } from "@/lib/llm/extract-relations";
@@ -10,6 +10,7 @@ import {
   type CrossBookRelationContext,
 } from "@/lib/llm/extract-cross-book-relations";
 import { conceptLookupKeys, mergeAliases, parseAliases } from "@/lib/concepts/normalize";
+import { scoreConceptCandidates } from "@/lib/concepts/scoring";
 import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
 import { fetchBookMetadata } from "@/lib/metadata/fetch-book-metadata";
 import { generateConceptCandidates, tocLineCount } from "@/lib/llm/generate-concept-candidates";
@@ -62,6 +63,7 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
 
     await db.delete(conceptRelations).where(eq(conceptRelations.bookId, bookId));
     await db.delete(bookConcepts).where(eq(bookConcepts.bookId, bookId));
+    await db.delete(rawConcepts).where(eq(rawConcepts.bookId, bookId));
 
     // Delete concepts no longer referenced by any book
     for (const conceptId of prevConceptIds) {
@@ -97,14 +99,41 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     }
 
     // Step 4: Extract concepts (LLM enriches candidates rather than extracting freely)
-    const extracted = await extractConcepts(title, author, enrichedNotes, model, candidates);
-    rawCount = extracted.length;
-    clusteredCount = new Set(extracted.map((concept) => concept.name.trim().toLowerCase()).filter(Boolean)).size;
+    const rawExtracted = await extractConcepts(title, author, enrichedNotes, model, candidates);
+    rawCount = rawExtracted.length;
+    if (rawExtracted.length > 0) {
+      await db.insert(rawConcepts).values(rawExtracted.map((concept, index) => ({
+        extractionRunId,
+        bookId,
+        rawIndex: index,
+        name: concept.name,
+        nameJa: concept.nameJa,
+        description: concept.description,
+        category: concept.category,
+        groundingType: concept.groundingType,
+        evidenceText: concept.evidenceText,
+        importance: concept.importance,
+        specificity: concept.specificityScore,
+        confidence: concept.confidence,
+        sourceType: concept.sourceEvidence?.sourceType ?? null,
+        sourceText: concept.sourceEvidence?.evidenceText ?? null,
+        payload: JSON.stringify(concept),
+      })));
+    }
+
+    const scored = scoreConceptCandidates(rawExtracted);
+    const extracted = scored.filter((item) => item.status === "promoted").map((item) => item.concept);
+    const scoreByName = new Map(scored.map((item) => [item.concept.name, item]));
+    clusteredCount = scored.length;
+    promotedCount = extracted.length;
+    droppedReasons = scored
+      .filter((item) => item.status === "rejected" && item.droppedReason)
+      .map((item) => `${item.concept.name}: ${item.droppedReason}`);
     await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
 
     // Step 5: Quality check
     const qualityWarnings = checkConceptQuality(extracted, tocCount);
-    droppedReasons = qualityWarnings.warnings;
+    droppedReasons = [...droppedReasons, ...qualityWarnings.warnings];
     if (qualityWarnings.status === "failed") {
       await finishExtractionRun(extractionRunId, "failed", {
         tocCount,
@@ -153,6 +182,11 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
         if (!existing.description && ec.description) {
           conceptUpdates.description = ec.description;
         }
+        conceptUpdates.groundingType = ec.groundingType;
+        conceptUpdates.category = ec.category;
+        const scoredConcept = scoreByName.get(ec.name);
+        conceptUpdates.finalScore = scoredConcept?.finalScore ?? 1;
+        conceptUpdates.status = scoredConcept?.status ?? "promoted";
 
         if (Object.keys(conceptUpdates).length > 0) {
           const [updated] = await db
@@ -172,6 +206,10 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
             name: ec.name,
             description: ec.description,
             domain: ec.domain,
+            groundingType: ec.groundingType,
+            category: ec.category,
+            finalScore: scoreByName.get(ec.name)?.finalScore ?? 1,
+            status: scoreByName.get(ec.name)?.status ?? "promoted",
             aliases: JSON.stringify(ec.nameJa ? [ec.nameJa] : []),
           })
           .returning();
@@ -201,7 +239,6 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
           sourceEvidenceType: ec.sourceEvidence?.sourceType ?? null,
           sourceEvidenceText: ec.sourceEvidence?.evidenceText ?? null,
         });
-        promotedCount += 1;
       }
     }
     await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });

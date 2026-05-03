@@ -24,6 +24,15 @@ export type ConceptType = (typeof CONCEPT_TYPES)[number];
 export const SPECIFICITY_LEVELS = ["book_specific", "domain_specific", "generic"] as const;
 export type Specificity = (typeof SPECIFICITY_LEVELS)[number];
 
+export const EXTRACTION_CATEGORIES = ["thesis", "framework", "component", "practice", "outcome", "context"] as const;
+export type ExtractionCategory = (typeof EXTRACTION_CATEGORIES)[number];
+
+export const GROUNDING_TYPES = ["source_explicit", "source_implied", "known_book", "model_prior"] as const;
+export type GroundingType = (typeof GROUNDING_TYPES)[number];
+
+export const CONCEPT_STATUSES = ["promoted", "candidate", "rejected"] as const;
+export type ConceptStatus = (typeof CONCEPT_STATUSES)[number];
+
 export const CONCEPT_LEVEL_LABELS: Record<ConceptLevel, string> = {
   core: "中核",
   supporting: "補助",
@@ -57,6 +66,28 @@ export const SPECIFICITY_LABELS: Record<Specificity, string> = {
   generic: "汎用",
 };
 
+export const EXTRACTION_CATEGORY_LABELS: Record<ExtractionCategory, string> = {
+  thesis: "主張",
+  framework: "枠組み",
+  component: "構成要素",
+  practice: "実践",
+  outcome: "成果",
+  context: "文脈",
+};
+
+export const GROUNDING_TYPE_LABELS: Record<GroundingType, string> = {
+  source_explicit: "明示",
+  source_implied: "示唆",
+  known_book: "既知書籍",
+  model_prior: "モデル推定",
+};
+
+export const CONCEPT_STATUS_LABELS: Record<ConceptStatus, string> = {
+  promoted: "採用",
+  candidate: "候補",
+  rejected: "却下",
+};
+
 export function conceptLevelLabel(level?: string | null): string | null {
   return level && level in CONCEPT_LEVEL_LABELS ? CONCEPT_LEVEL_LABELS[level as ConceptLevel] : null;
 }
@@ -67,6 +98,22 @@ export function conceptTypeLabel(type?: string | null): string | null {
 
 export function specificityLabel(specificity?: string | null): string | null {
   return specificity && specificity in SPECIFICITY_LABELS ? SPECIFICITY_LABELS[specificity as Specificity] : null;
+}
+
+export function extractionCategoryLabel(category?: string | null): string | null {
+  return category && category in EXTRACTION_CATEGORY_LABELS
+    ? EXTRACTION_CATEGORY_LABELS[category as ExtractionCategory]
+    : null;
+}
+
+export function groundingTypeLabel(groundingType?: string | null): string | null {
+  return groundingType && groundingType in GROUNDING_TYPE_LABELS
+    ? GROUNDING_TYPE_LABELS[groundingType as GroundingType]
+    : null;
+}
+
+export function conceptStatusLabel(status?: string | null): string | null {
+  return status && status in CONCEPT_STATUS_LABELS ? CONCEPT_STATUS_LABELS[status as ConceptStatus] : null;
 }
 
 export function conceptMetadataLabels({

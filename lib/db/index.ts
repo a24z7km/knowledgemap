@@ -4,7 +4,14 @@ import * as schema from "./schema";
 import path from "path";
 import fs from "fs";
 import { RELATION_TYPES } from "@/lib/relations";
-import { CONCEPT_LEVELS, CONCEPT_TYPES, SPECIFICITY_LEVELS } from "@/lib/concept-metadata";
+import {
+  CONCEPT_LEVELS,
+  CONCEPT_STATUSES,
+  CONCEPT_TYPES,
+  EXTRACTION_CATEGORIES,
+  GROUNDING_TYPES,
+  SPECIFICITY_LEVELS,
+} from "@/lib/concept-metadata";
 
 const DB_PATH = path.join(process.cwd(), "data", "app.db");
 
@@ -41,6 +48,10 @@ function getDb() {
       aliases TEXT NOT NULL DEFAULT '[]',
       description TEXT,
       domain TEXT NOT NULL DEFAULT 'general',
+      grounding_type TEXT NOT NULL DEFAULT 'source_explicit' CHECK(grounding_type IN (${groundingTypeSqlList()})),
+      category TEXT NOT NULL DEFAULT 'context' CHECK(category IN (${extractionCategorySqlList()})),
+      final_score REAL NOT NULL DEFAULT 1.0,
+      status TEXT NOT NULL DEFAULT 'promoted' CHECK(status IN (${conceptStatusSqlList()})),
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -82,15 +93,37 @@ function getDb() {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       completed_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS raw_concepts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      extraction_run_id INTEGER REFERENCES extraction_runs(id) ON DELETE CASCADE,
+      book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      raw_index INTEGER NOT NULL DEFAULT 0,
+      name TEXT NOT NULL,
+      name_ja TEXT,
+      description TEXT,
+      category TEXT NOT NULL DEFAULT 'context' CHECK(category IN (${extractionCategorySqlList()})),
+      grounding_type TEXT NOT NULL DEFAULT 'source_explicit' CHECK(grounding_type IN (${groundingTypeSqlList()})),
+      evidence_text TEXT,
+      importance INTEGER NOT NULL DEFAULT 3,
+      specificity INTEGER NOT NULL DEFAULT 3,
+      confidence REAL NOT NULL DEFAULT 0.5,
+      source_type TEXT,
+      source_text TEXT,
+      payload TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   ensureRelationTypeConstraint(sqlite);
   ensureAnalyzeStatusConstraint(sqlite);
+  ensureConceptScoringColumns(sqlite);
   ensureBookConceptMetadataColumns(sqlite);
   ensureBookConceptSourceEvidenceColumns(sqlite);
   normalizeExistingConceptRelations(sqlite);
   ensureConceptRelationUniqueIndexes(sqlite);
   ensureExtractionRunIndexes(sqlite);
+  ensureRawConceptIndexes(sqlite);
 
   return _db;
 }
@@ -113,6 +146,51 @@ function conceptTypeSqlList() {
 
 function specificitySqlList() {
   return SPECIFICITY_LEVELS.map((specificity) => `'${specificity}'`).join(",");
+}
+
+function extractionCategorySqlList() {
+  return EXTRACTION_CATEGORIES.map((category) => `'${category}'`).join(",");
+}
+
+function groundingTypeSqlList() {
+  return GROUNDING_TYPES.map((groundingType) => `'${groundingType}'`).join(",");
+}
+
+function conceptStatusSqlList() {
+  return CONCEPT_STATUSES.map((status) => `'${status}'`).join(",");
+}
+
+function ensureConceptScoringColumns(sqlite: Database.Database) {
+  const columns = sqlite.prepare("PRAGMA table_info(concepts)").all() as { name: string }[];
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("grounding_type")) {
+    sqlite.exec(`
+      ALTER TABLE concepts
+      ADD COLUMN grounding_type TEXT NOT NULL DEFAULT 'source_explicit'
+      CHECK(grounding_type IN (${groundingTypeSqlList()}))
+    `);
+  }
+
+  if (!columnNames.has("category")) {
+    sqlite.exec(`
+      ALTER TABLE concepts
+      ADD COLUMN category TEXT NOT NULL DEFAULT 'context'
+      CHECK(category IN (${extractionCategorySqlList()}))
+    `);
+  }
+
+  if (!columnNames.has("final_score")) {
+    sqlite.exec("ALTER TABLE concepts ADD COLUMN final_score REAL NOT NULL DEFAULT 1.0");
+  }
+
+  if (!columnNames.has("status")) {
+    sqlite.exec(`
+      ALTER TABLE concepts
+      ADD COLUMN status TEXT NOT NULL DEFAULT 'promoted'
+      CHECK(status IN (${conceptStatusSqlList()}))
+    `);
+  }
 }
 
 function ensureBookConceptMetadataColumns(sqlite: Database.Database) {
@@ -324,6 +402,16 @@ function ensureExtractionRunIndexes(sqlite: Database.Database) {
   sqlite.exec(`
     CREATE INDEX IF NOT EXISTS idx_extraction_runs_book_created
     ON extraction_runs (book_id, created_at DESC);
+  `);
+}
+
+function ensureRawConceptIndexes(sqlite: Database.Database) {
+  sqlite.exec(`
+    CREATE INDEX IF NOT EXISTS idx_raw_concepts_book
+    ON raw_concepts (book_id);
+
+    CREATE INDEX IF NOT EXISTS idx_raw_concepts_extraction_run
+    ON raw_concepts (extraction_run_id);
   `);
 }
 

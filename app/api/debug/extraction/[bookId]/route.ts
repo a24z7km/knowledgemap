@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "@/lib/db";
-import { books, extractionRuns } from "@/lib/db/schema";
+import { books, extractionRuns, rawConcepts } from "@/lib/db/schema";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ bookId: string }> }) {
   try {
@@ -20,6 +20,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ bookId:
       .from(extractionRuns)
       .where(eq(extractionRuns.bookId, numericBookId))
       .orderBy(desc(extractionRuns.createdAt));
+    const latestRawConcepts = runs[0]
+      ? await db.select().from(rawConcepts).where(eq(rawConcepts.extractionRunId, runs[0].id))
+      : [];
 
     return NextResponse.json({
       book: {
@@ -30,6 +33,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ bookId:
         analyzeError: book.analyzeError,
       },
       latestRun: runs[0] ? normalizeRun(runs[0]) : null,
+      latestRawConcepts,
       runs: runs.map(normalizeRun),
     });
   } catch (err) {

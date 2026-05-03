@@ -1,7 +1,14 @@
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 import { RELATION_TYPES } from "@/lib/relations";
-import { CONCEPT_LEVELS, CONCEPT_TYPES, SPECIFICITY_LEVELS } from "@/lib/concept-metadata";
+import {
+  CONCEPT_LEVELS,
+  CONCEPT_STATUSES,
+  CONCEPT_TYPES,
+  EXTRACTION_CATEGORIES,
+  GROUNDING_TYPES,
+  SPECIFICITY_LEVELS,
+} from "@/lib/concept-metadata";
 
 export const books = sqliteTable("books", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -20,6 +27,10 @@ export const concepts = sqliteTable("concepts", {
   aliases: text("aliases").notNull().default("[]"),
   description: text("description"),
   domain: text("domain").notNull().default("general"),
+  groundingType: text("grounding_type", { enum: GROUNDING_TYPES }).notNull().default("source_explicit"),
+  category: text("category", { enum: EXTRACTION_CATEGORIES }).notNull().default("context"),
+  finalScore: real("final_score").notNull().default(1.0),
+  status: text("status", { enum: CONCEPT_STATUSES }).notNull().default("promoted"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
 });
 
@@ -52,6 +63,26 @@ export const extractionRuns = sqliteTable("extraction_runs", {
   completedAt: text("completed_at"),
 });
 
+export const rawConcepts = sqliteTable("raw_concepts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  extractionRunId: integer("extraction_run_id").references(() => extractionRuns.id, { onDelete: "cascade" }),
+  bookId: integer("book_id").notNull().references(() => books.id, { onDelete: "cascade" }),
+  rawIndex: integer("raw_index").notNull().default(0),
+  name: text("name").notNull(),
+  nameJa: text("name_ja"),
+  description: text("description"),
+  category: text("category", { enum: EXTRACTION_CATEGORIES }).notNull().default("context"),
+  groundingType: text("grounding_type", { enum: GROUNDING_TYPES }).notNull().default("source_explicit"),
+  evidenceText: text("evidence_text"),
+  importance: integer("importance").notNull().default(3),
+  specificity: integer("specificity").notNull().default(3),
+  confidence: real("confidence").notNull().default(0.5),
+  sourceType: text("source_type"),
+  sourceText: text("source_text"),
+  payload: text("payload").notNull().default("{}"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+});
+
 export const conceptRelations = sqliteTable("concept_relations", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   fromConceptId: integer("from_concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
@@ -71,4 +102,5 @@ export type Concept = typeof concepts.$inferSelect;
 export type NewConcept = typeof concepts.$inferInsert;
 export type BookConcept = typeof bookConcepts.$inferSelect;
 export type ExtractionRun = typeof extractionRuns.$inferSelect;
+export type RawConcept = typeof rawConcepts.$inferSelect;
 export type ConceptRelation = typeof conceptRelations.$inferSelect;

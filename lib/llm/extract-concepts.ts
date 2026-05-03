@@ -1,11 +1,12 @@
 import { CONCEPT_DOMAINS, type ConceptDomain } from "@/lib/domains";
 import type { ConceptCandidate } from "./generate-concept-candidates";
 import {
-  CONCEPT_LEVELS,
-  CONCEPT_TYPES,
-  SPECIFICITY_LEVELS,
+  EXTRACTION_CATEGORIES,
+  GROUNDING_TYPES,
   type ConceptLevel,
   type ConceptType,
+  type ExtractionCategory,
+  type GroundingType,
   type Specificity,
 } from "@/lib/concept-metadata";
 import OpenAI from "openai";
@@ -23,19 +24,6 @@ export type SourceType =
   | "ndl_description"
   | "ndl_subjects";
 
-const SOURCE_TYPES: SourceType[] = [
-  "title",
-  "subtitle",
-  "user_notes",
-  "google_books_description",
-  "categories",
-  "table_of_contents",
-  "openbd_description",
-  "openbd_table_of_contents",
-  "ndl_description",
-  "ndl_subjects",
-];
-
 export interface SourceEvidence {
   sourceType: SourceType;
   evidenceText: string;
@@ -48,10 +36,29 @@ export interface ExtractedConcept {
   importance: 1 | 2 | 3 | 4 | 5;
   excerpt: string;
   domain: ConceptDomain;
+  category: ExtractionCategory;
+  groundingType: GroundingType;
+  evidenceText: string;
+  specificityScore: 1 | 2 | 3 | 4 | 5;
+  confidence: number;
   conceptLevel: ConceptLevel;
   conceptType: ConceptType;
   specificity: Specificity;
   sourceEvidence: SourceEvidence;
+}
+
+interface LlmExtractedConcept {
+  name?: string;
+  nameJa?: string;
+  description?: string;
+  importance?: number;
+  excerpt?: string;
+  domain?: ConceptDomain;
+  category?: ExtractionCategory;
+  groundingType?: GroundingType;
+  evidenceText?: string;
+  specificity?: number;
+  confidence?: number;
 }
 
 const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
@@ -97,38 +104,31 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
                 description:
                   "Primary knowledge domain. Prefer a specific domain; use general only when no other domain fits.",
               },
-              conceptLevel: {
+              category: {
                 type: "string",
-                enum: CONCEPT_LEVELS,
-                description:
-                  "core=central concept, chapter-level term, theory/model/technical term; supporting=needed to understand core; application=method/workflow/use; outcome=effect/result/goal; context=background/problem/precondition",
+                enum: EXTRACTION_CATEGORIES,
+                description: "thesis, framework, component, practice, outcome, or context",
               },
-              conceptType: {
+              groundingType: {
                 type: "string",
-                enum: CONCEPT_TYPES,
-                description: "The kind of concept: theory, model, framework, principle, technical_term, mechanism, method, practice, distinction, metric, institution, person, event, phenomenon, outcome, or theme. Use framework for the container (e.g. '7 Habits', 'PDCA') and principle or practice for each numbered/named component inside it (e.g. 'Be Proactive', 'Begin with the End in Mind'). This distinction is critical for building correct relationships.",
+                enum: GROUNDING_TYPES,
+                description: "source_explicit, source_implied, known_book, or model_prior",
+              },
+              evidenceText: {
+                type: "string",
+                description: "Exact source phrase, candidate phrase, or concise evidence text used to ground this candidate",
               },
               specificity: {
-                type: "string",
-                enum: SPECIFICITY_LEVELS,
-                description:
-                  "book_specific=strongly tied to this book/author/chapter structure; domain_specific=important specialized domain concept; generic=broad cross-domain label. Keep generic at or below 20%.",
+                type: "integer",
+                minimum: 1,
+                maximum: 5,
+                description: "How specific the concept is to this book/domain. 5=highly specific, 1=generic",
               },
-              sourceEvidence: {
-                type: "object",
-                description: "The source field and exact text that justifies extracting this concept. Required for every concept.",
-                properties: {
-                  sourceType: {
-                    type: "string",
-                    enum: ["title", "subtitle", "user_notes", "google_books_description", "categories", "table_of_contents", "openbd_description", "openbd_table_of_contents", "ndl_description", "ndl_subjects"],
-                    description: "Which part of the source material this concept comes from",
-                  },
-                  evidenceText: {
-                    type: "string",
-                    description: "The specific text from the source material that supports this concept",
-                  },
-                },
-                required: ["sourceType", "evidenceText"],
+              confidence: {
+                type: "number",
+                minimum: 0,
+                maximum: 1,
+                description: "Confidence that this is a useful concept candidate grounded in the source",
               },
             },
             required: [
@@ -138,14 +138,15 @@ const CONCEPT_TOOL: OpenAI.ChatCompletionTool = {
               "importance",
               "excerpt",
               "domain",
-              "conceptLevel",
-              "conceptType",
+              "category",
+              "groundingType",
+              "evidenceText",
               "specificity",
-              "sourceEvidence",
+              "confidence",
             ],
           },
-          minItems: 8,
-          maxItems: 60,
+          minItems: 30,
+          maxItems: 100,
         },
       },
       required: ["concepts"],
@@ -170,7 +171,7 @@ export async function extractConcepts(
 
   const response = await chatWithRetry({
     model,
-    max_completion_tokens: 4096,
+    max_completion_tokens: 8192,
     tools: [CONCEPT_TOOL],
     tool_choice: { type: "function", function: { name: "save_concepts" } },
     messages: [
@@ -183,11 +184,20 @@ SOURCE-GROUNDING RULES (highest priority):
 - Concepts may be explicitly stated OR strongly implied by the source material. If the source identifies a field or organizing category (e.g. "brain chemicals", "neurotransmitters", "economics", "security controls"), you may decompose it into its core domain sub-concepts when the source strongly supports that field.
 - Do not import concepts from other books, previous analyses, existing map concepts, or unrelated general knowledge.
 - Do not infer concepts from the book's reputation or what it "probably covers" — only from the actual source text provided.
-- For each concept, record sourceEvidence: the sourceType and the evidenceText (the source phrase that grounds this concept — may be the exact term or the broader phrase that strongly implies it).
-- specificity rules:
-  - book_specific: the concept name or chapter title appears explicitly in the source material
-  - domain_specific: the source strongly identifies a field/domain, and this is a core concept of that domain — even if the exact term is not in the source
-  - generic: broad cross-domain theme not tied to any specific domain in the source. Keep generic <= 20%.
+- For each concept, record groundingType and evidenceText.
+- groundingType:
+  - source_explicit: the exact concept name or close equivalent appears in the source
+  - source_implied: strongly implied by a source phrase, heading, subject, or description
+  - known_book: known canonical concept for this exact book; use sparingly until canonical guards are added
+  - model_prior: model's domain prior; use only when needed to preserve the domain structure
+- specificity is numeric 1-5: 5=book-specific/chapter-level/named term, 3=domain-specific, 1=generic.
+
+VOLUME RULES:
+- Do not be selective in this call. This is the candidate-generation stage.
+- Return at least 30 candidates whenever there is enough source material.
+- If the source contains a table of contents or candidate list, process it broadly instead of choosing only the top few.
+- It is better to return a noisy but grounded candidate pool than to under-extract.
+- Do not stop at 2-10 concepts. Aim for 30-100 raw candidates; later pipeline stages will cluster and score.
 
 Primary extraction goal:
 - First identify the organizing axis of the book from its title, subtitle, description, categories, and table of contents.
@@ -210,19 +220,18 @@ Naming rules:
 - Preserve famous named ideas when the book is known for them, such as "Be Proactive", "Circle of Influence", or "Think Win-Win".
 - Preserve domain terms even when they are narrower than a broad self-help or business abstraction.
 
-Concept metadata:
-- conceptLevel:
-  - core: the book's central concepts, chapter-title-level ideas, theory/model names, specialist vocabulary, author-specific terms
-  - supporting: concepts needed to understand a core concept
-  - application: practices, workflows, uses, exercises, interventions
-  - outcome: effects, results, goals, benefits
-  - context: background, problem framing, assumptions, conditions
-- conceptType:
-  - theory, model, framework, principle, technical_term, mechanism, method, practice, distinction, metric, institution, person, event, phenomenon, outcome, theme
-- specificity:
-  - book_specific: strongly tied to this book, author, or chapter structure
-  - domain_specific: common in the field but essential to this book
-  - generic: broad cross-domain labels. Keep generic <= 20% of the output.
+Candidate metadata:
+- category:
+  - thesis: the book's central claim or argumentative axis
+  - framework: named container, framework, model, or overall structure
+  - component: part of a framework, numbered habit/principle, mechanism, technical component, or sub-concept
+  - practice: action, exercise, workflow, method, behavior, application
+  - outcome: result, benefit, effect, goal
+  - context: background, problem framing, precondition, audience, domain context
+- groundingType and evidenceText are required for every candidate.
+- importance: 1-5, centrality to the book.
+- specificity: 1-5, concept specificity.
+- confidence: 0-1, confidence this should remain in the raw candidate pool.
 
 Domain classification rules:
 - thinking: thinking methods, mental models, creativity, framing, abstraction, idea generation
@@ -265,16 +274,16 @@ Good extraction examples:
 - Philosophy: Utilitarianism, Deontology, Existentialism, Categorical Imperative
 
 Output balance:
-- 40-60%: core and/or domain_specific concepts
-- 20-30%: supporting concepts
-- 10-25%: application or practice concepts
-- 5-15%: outcome or context concepts
-- generic specificity must be <= 20%.
+- 40-60%: framework/component/thesis candidates
+- 20-30%: supporting component/context candidates
+- 10-25%: practice candidates
+- 5-15%: outcome candidates
+- low-specificity generic candidates should be <= 20%.
 - Avoid assigning more than 20% of concepts to general domain unless the book truly spans unrelated topics.`,
       },
       {
         role: "user",
-        content: `Extract knowledge concepts from this book. Ground every concept in the source material below.
+        content: `Extract a large raw candidate pool from this book. Ground every candidate in the source material below.
 
 Title: ${title}
 Author: ${author}
@@ -285,17 +294,17 @@ ${candidateBlock}
 
 Extraction procedure:
 ${candidates.length > 0 ? `1. You have been given ${candidates.length} pre-extracted concept candidates from TOC, subjects, and user notes (see above).
-   - Process EVERY candidate: assign English name, nameJa, description, domain, conceptLevel, conceptType, specificity, and sourceEvidence.
+   - Process EVERY candidate: assign English name, nameJa, description, domain, category, groundingType, evidenceText, importance, specificity, and confidence.
    - Filter out noise (marketing copy, structural labels like "Chapter", metadata like "ISBN", role labels like "著者").
-   - You may merge near-duplicates into one concept.
-2. After processing all valid candidates, add up to 20 additional concepts that are EXPLICITLY grounded in the source material (descriptions, subtitle, categories) but not already covered by the candidates.
+   - Do NOT aggressively deduplicate. This is a raw candidate stage; near-duplicates are acceptable if they have different evidence.
+2. After processing all valid candidates, add additional concepts that are grounded in the source material (descriptions, subtitle, categories) but not already covered by the candidates.
 3. Do NOT add concepts from other books, prior analyses, or unrelated general knowledge.
-4. For each concept, set sourceEvidence: { sourceType: (which source field), evidenceText: (exact phrase from source) }.` : `1. Read the source material carefully.
+4. For each concept, set groundingType and evidenceText.` : `1. Read the source material carefully.
 2. Identify the organizing axis: field, central topic, named theories, chapter structure, key terms.
-3. Extract concepts that are explicitly named in the source first (mark these book_specific if they appear verbatim, domain_specific if they are core domain terms implied by the source).
+3. Extract concepts that are explicitly named in the source first.
 4. When the source strongly identifies a specific domain (e.g. "脳内物質" → neuroscience; "microeconomics" → economics; "zero trust" → cybersecurity), decompose into the central sub-concepts of that domain and mark them domain_specific with the source phrase as evidenceText.
 5. Do not add concepts from other books, prior analyses, or unrelated general knowledge.
-6. For each concept, set sourceEvidence: { sourceType: (which source field), evidenceText: (the phrase from the source that grounds this concept) }.`}
+6. For each concept, set groundingType and evidenceText.`}
 
 Example: if subtitle says "脳内物質で仕事の精度と速度を上げる方法":
 - "Brain Chemicals" → book_specific (subtitle names it directly)
@@ -315,7 +324,7 @@ Prefer specific domain terms over generic labels:
 - "Opportunity Cost", "Demand Curve", "Marginal Utility" over only "Decision Making"
 - "Zero Trust", "Authentication", "Threat Modeling" over only "Risk Management"
 
-Return ${candidates.length > 0 ? `at least ${Math.min(candidates.length, 8)} concepts (all valid candidates + extras)` : "10-60 concepts"}. Generic concepts must stay under 20%.`,
+Return at least 30 candidates if there is enough source material. Do not under-extract. If there are fewer than 30 genuinely grounded candidates, return all grounded candidates and avoid invented filler. Generic concepts must stay under 20%.`,
       },
     ],
   });
@@ -325,56 +334,41 @@ Return ${candidates.length > 0 ? `at least ${Math.min(candidates.length, 8)} con
     throw new Error("LLM did not return function call");
   }
 
-  const input = JSON.parse(toolCall.function.arguments) as { concepts: ExtractedConcept[] };
+  const input = JSON.parse(toolCall.function.arguments) as { concepts: LlmExtractedConcept[] };
   const all = normalizeExtractedConcepts(input.concepts ?? []);
-  return all.filter((c) => SOURCE_TYPES.includes(c.sourceEvidence?.sourceType as SourceType));
+  return all;
 }
 
-function normalizeExtractedConcepts(concepts: ExtractedConcept[]): ExtractedConcept[] {
-  const unique = new Map<string, ExtractedConcept>();
-
-  for (const concept of concepts) {
-    const normalized = normalizeExtractedConcept(concept);
-    const key = normalized.name.trim().toLowerCase();
-    if (!key) continue;
-    const previous = unique.get(key);
-    if (!previous || normalized.importance > previous.importance) {
-      unique.set(key, normalized);
-    }
-  }
-
-  const sorted = [...unique.values()].sort((a, b) => {
-    const specificityScore = scoreSpecificity(b.specificity) - scoreSpecificity(a.specificity);
-    if (specificityScore !== 0) return specificityScore;
-    const levelScore = scoreLevel(b.conceptLevel) - scoreLevel(a.conceptLevel);
-    if (levelScore !== 0) return levelScore;
-    return b.importance - a.importance;
-  });
-
-  const genericLimit = Math.max(1, Math.floor(sorted.length * 0.2));
-  let genericCount = 0;
-  return sorted.filter((concept) => {
-    if (concept.specificity !== "generic") return true;
-    genericCount += 1;
-    return genericCount <= genericLimit;
-  });
+function normalizeExtractedConcepts(concepts: LlmExtractedConcept[]): ExtractedConcept[] {
+  return concepts.map(normalizeExtractedConcept).filter((concept) => concept.name.length > 0);
 }
 
-function normalizeExtractedConcept(concept: ExtractedConcept): ExtractedConcept {
+function normalizeExtractedConcept(concept: LlmExtractedConcept): ExtractedConcept {
+  const category = EXTRACTION_CATEGORIES.includes(concept.category as ExtractionCategory)
+    ? concept.category as ExtractionCategory
+    : "context";
+  const groundingType = GROUNDING_TYPES.includes(concept.groundingType as GroundingType)
+    ? concept.groundingType as GroundingType
+    : "source_implied";
+  const specificityScore = clampImportance(concept.specificity ?? 3);
+  const evidenceText = concept.evidenceText?.trim() ?? "";
+
   return {
-    ...concept,
     name: concept.name?.trim() ?? "",
     nameJa: concept.nameJa?.trim() ?? "",
     description: concept.description?.trim() ?? "",
     excerpt: concept.excerpt?.trim() ?? "",
-    importance: clampImportance(concept.importance),
-    domain: CONCEPT_DOMAINS.includes(concept.domain) ? concept.domain : "general",
-    conceptLevel: CONCEPT_LEVELS.includes(concept.conceptLevel) ? concept.conceptLevel : "supporting",
-    conceptType: CONCEPT_TYPES.includes(concept.conceptType) ? concept.conceptType : "theme",
-    specificity: SPECIFICITY_LEVELS.includes(concept.specificity) ? concept.specificity : "domain_specific",
-    sourceEvidence: concept.sourceEvidence && SOURCE_TYPES.includes(concept.sourceEvidence.sourceType)
-      ? { sourceType: concept.sourceEvidence.sourceType, evidenceText: concept.sourceEvidence.evidenceText?.trim() ?? "" }
-      : { sourceType: "google_books_description", evidenceText: "" },
+    importance: clampImportance(concept.importance ?? 3),
+    domain: concept.domain && CONCEPT_DOMAINS.includes(concept.domain) ? concept.domain : "general",
+    category,
+    groundingType,
+    evidenceText,
+    specificityScore,
+    confidence: clampConfidence(concept.confidence),
+    conceptLevel: categoryToConceptLevel(category),
+    conceptType: categoryToConceptType(category),
+    specificity: scoreToSpecificity(specificityScore, groundingType),
+    sourceEvidence: { sourceType: "google_books_description", evidenceText },
   };
 }
 
@@ -385,16 +379,30 @@ function clampImportance(value: number): 1 | 2 | 3 | 4 | 5 {
   return rounded as 1 | 2 | 3 | 4 | 5;
 }
 
-function scoreSpecificity(specificity: Specificity) {
-  if (specificity === "book_specific") return 3;
-  if (specificity === "domain_specific") return 2;
-  return 1;
+function clampConfidence(value: number | undefined): number {
+  const numeric = Number(value ?? 0.5);
+  if (!Number.isFinite(numeric)) return 0.5;
+  return Math.min(1, Math.max(0, numeric));
 }
 
-function scoreLevel(level: ConceptLevel) {
-  if (level === "core") return 5;
-  if (level === "supporting") return 4;
-  if (level === "application") return 3;
-  if (level === "context") return 2;
-  return 1;
+function categoryToConceptLevel(category: ExtractionCategory): ConceptLevel {
+  if (category === "thesis" || category === "framework" || category === "component") return "core";
+  if (category === "practice") return "application";
+  if (category === "outcome") return "outcome";
+  return "context";
+}
+
+function categoryToConceptType(category: ExtractionCategory): ConceptType {
+  if (category === "framework") return "framework";
+  if (category === "practice") return "practice";
+  if (category === "outcome") return "outcome";
+  if (category === "thesis") return "principle";
+  if (category === "component") return "technical_term";
+  return "theme";
+}
+
+function scoreToSpecificity(score: 1 | 2 | 3 | 4 | 5, groundingType: GroundingType): Specificity {
+  if (groundingType === "source_explicit" || score >= 4) return "book_specific";
+  if (score >= 3 || groundingType === "source_implied") return "domain_specific";
+  return "generic";
 }
