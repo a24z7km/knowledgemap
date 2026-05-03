@@ -255,6 +255,16 @@ export default function BookDetailPage() {
     finally { setStep1Running(false); }
   };
 
+  /* ── concept delete ── */
+  const deleteConcept = async (bookConceptId: number) => {
+    const res = await fetch(`/api/books/${id}/concepts/${bookConceptId}`, { method: "DELETE" });
+    if (res.ok) {
+      setConcepts((prev) => prev.filter((c) => c.id !== bookConceptId));
+    } else {
+      toast.error("削除に失敗しました");
+    }
+  };
+
   /* ── Step 2 ── */
   const runStep2 = async () => {
     const res = await fetch(`/api/analyze/${id}`, {
@@ -560,7 +570,7 @@ export default function BookDetailPage() {
                 .sort((a, b) => b.importance - a.importance)
                 .map((c) => (
                   <div key={c.id}>
-                    <div className="flex items-start gap-2">
+                    <div className="flex items-start gap-2 group">
                       <span className={`text-xs px-1.5 py-0.5 rounded font-medium shrink-0 ${domainBadgeClass(c.conceptDomain)}`}>
                         {c.conceptDomain}
                       </span>
@@ -582,10 +592,19 @@ export default function BookDetailPage() {
                           <p className="text-xs text-muted-foreground mt-1 italic border-l-2 pl-2">{c.excerpt}</p>
                         )}
                       </div>
-                      <div className="flex gap-0.5 shrink-0">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                          <div key={i} className={`w-1.5 h-1.5 rounded-full ${i < c.importance ? "bg-foreground" : "bg-muted"}`} />
-                        ))}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex gap-0.5">
+                          {Array.from({ length: 5 }).map((_, i) => (
+                            <div key={i} className={`w-1.5 h-1.5 rounded-full ${i < c.importance ? "bg-foreground" : "bg-muted"}`} />
+                          ))}
+                        </div>
+                        <button
+                          onClick={() => deleteConcept(c.id)}
+                          className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="この本から削除"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                     <Separator className="mt-3" />
