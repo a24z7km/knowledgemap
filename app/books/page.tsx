@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Download, Plus, Trash2, Play, Link as LinkIcon, Upload, CheckSquare, Square } from "lucide-react";
+import { Download, Plus, Trash2, Play, Link as LinkIcon, Upload, CheckSquare, Square, Loader2, CheckCircle2, XCircle, Clock } from "lucide-react";
 import type { Book, ExtractionRun } from "@/lib/db/schema";
 import { analysisErrorTitle } from "@/lib/analysis-errors";
 
@@ -74,6 +74,12 @@ export default function BooksPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [bulkAnalyzing, setBulkAnalyzing] = useState(false);
 
+  type BulkStatus = "pending" | "step1" | "step2" | "done" | "error";
+  const [bulkQueue, setBulkQueue] = useState<{ book: BookListItem; status: BulkStatus; error?: string }[]>([]);
+
+  const setBulkItemStatus = (id: number, status: BulkStatus, error?: string) =>
+    setBulkQueue((q) => q.map((item) => item.book.id === id ? { ...item, status, error } : item));
+
   const toggleSelect = (id: number) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -99,32 +105,39 @@ export default function BooksPage() {
     if (targets.length === 0) return;
     setBulkAnalyzing(true);
     setSelectedIds(new Set());
-    for (const book of targets) {
-      // Step 1: キーワード収集（完了まで待つ）
-      toast.info(`「${book.title}」Step 1 収集中...`);
-      const s1 = await fetch(`/api/books/${book.id}/step1`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model }),
-      });
-      if (!s1.ok) {
-        toast.error(`「${book.title}」Step 1 失敗`);
-        load();
-        continue;
-      }
+    setBulkQueue(targets.map((book) => ({ book, status: "pending" })));
 
-      // Step 2: 概念抽出を開始（非同期ジョブ）
-      const s2 = await fetch(`/api/analyze/${book.id}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model }),
-      });
-      if (s2.ok) {
-        toast.info(`「${book.title}」Step 2 抽出開始`);
-      } else {
-        toast.error(`「${book.title}」Step 2 開始失敗`);
+    for (const book of targets) {
+      try {
+        setBulkItemStatus(book.id, "step1");
+        const s1 = await fetch(`/api/books/${book.id}/step1`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model }),
+        });
+        if (!s1.ok) {
+          const body = await s1.json().catch(() => ({})) as { error?: string };
+          setBulkItemStatus(book.id, "error", `Step 1 失敗: ${body.error ?? s1.statusText}`);
+          load();
+          continue;
+        }
+
+        setBulkItemStatus(book.id, "step2");
+        const s2 = await fetch(`/api/analyze/${book.id}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model }),
+        });
+        if (s2.ok) {
+          setBulkItemStatus(book.id, "done");
+        } else {
+          setBulkItemStatus(book.id, "error", "Step 2 開始失敗");
+        }
+        load();
+      } catch (err) {
+        setBulkItemStatus(book.id, "error", String(err));
+        load();
       }
-      load();
     }
     setBulkAnalyzing(false);
   };
@@ -268,26 +281,34 @@ export default function BooksPage() {
 
   // ── Analyze / Delete ───────────────────────────────────────────
   const analyze = async (book: BookListItem) => {
-    // Step 1
-    toast.info(`「${book.title}」Step 1 収集中...`);
-    const s1 = await fetch(`/api/books/${book.id}/step1`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
-    });
-    if (!s1.ok) { toast.error(`「${book.title}」Step 1 失敗`); return; }
+    try {
+      // Step 1
+      toast.info(`「${book.title}」Step 1 収集中...`);
+      const s1 = await fetch(`/api/books/${book.id}/step1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+      if (!s1.ok) {
+        const body = await s1.json().catch(() => ({})) as { error?: string };
+        toast.error(`「${book.title}」Step 1 失敗: ${body.error ?? s1.statusText}`);
+        return;
+      }
 
-    // Step 2
-    const s2 = await fetch(`/api/analyze/${book.id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
-    });
-    if (s2.ok) {
-      toast.info(`「${book.title}」Step 2 抽出開始（${model}）`);
-      load();
-    } else {
-      toast.error(`「${book.title}」Step 2 開始失敗`);
+      // Step 2
+      const s2 = await fetch(`/api/analyze/${book.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+      if (s2.ok) {
+        toast.info(`「${book.title}」Step 2 抽出開始（${model}）`);
+        load();
+      } else {
+        toast.error(`「${book.title}」Step 2 開始失敗`);
+      }
+    } catch (err) {
+      toast.error(`「${book.title}」エラー: ${String(err)}`);
     }
   };
 
@@ -437,6 +458,42 @@ export default function BooksPage() {
           </DialogContent>
         </Dialog>
       </div>
+
+      {/* ── 一括実行進捗パネル ── */}
+      {bulkQueue.length > 0 && (
+        <div className="rounded-lg border bg-card p-3 space-y-1.5">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-2">
+            一括実行 ({bulkQueue.filter((i) => i.status === "done" || i.status === "error").length} / {bulkQueue.length} 完了)
+          </p>
+          {bulkQueue.map(({ book, status, error }) => (
+            <div key={book.id} className="flex items-center gap-2 text-sm">
+              <span className="shrink-0">
+                {status === "pending"  && <Clock      className="w-4 h-4 text-muted-foreground" />}
+                {status === "step1"    && <Loader2    className="w-4 h-4 text-blue-500 animate-spin" />}
+                {status === "step2"    && <Loader2    className="w-4 h-4 text-indigo-500 animate-spin" />}
+                {status === "done"     && <CheckCircle2 className="w-4 h-4 text-green-500" />}
+                {status === "error"    && <XCircle    className="w-4 h-4 text-destructive" />}
+              </span>
+              <span className="flex-1 truncate font-medium">{book.title}</span>
+              <span className="text-xs text-muted-foreground shrink-0">
+                {status === "pending" && "待機中"}
+                {status === "step1"   && "Step 1 収集中..."}
+                {status === "step2"   && "Step 2 抽出開始中..."}
+                {status === "done"    && "完了"}
+                {status === "error"   && (error ?? "エラー")}
+              </span>
+            </div>
+          ))}
+          {!bulkAnalyzing && (
+            <button
+              className="mt-1 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => setBulkQueue([])}
+            >
+              閉じる
+            </button>
+          )}
+        </div>
+      )}
 
       {books.length === 0 && (
         <p className="text-muted-foreground text-sm">本がまだ登録されていません。</p>
