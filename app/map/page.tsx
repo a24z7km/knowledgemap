@@ -38,8 +38,6 @@ interface GraphEdge {
   toConceptId: number;
   relationType: string;
   weight: number;
-  confidence: number | null;
-  source: string;
   evidence: string | null;
   bookId: number | null;
 }
@@ -74,7 +72,6 @@ interface MapInsight {
 }
 
 type ViewMode = "all" | "one_hop" | "two_hop" | "shortest_path" | "book" | "relation_type" | "cross_book";
-type MapFilter = "core" | "expanded" | "all_concepts";
 
 const VIEW_MODE_LABELS: Record<ViewMode, string> = {
   all: "全体",
@@ -87,12 +84,6 @@ const VIEW_MODE_LABELS: Record<ViewMode, string> = {
 };
 const RELATION_TYPES = Object.keys(RELATION_LABELS);
 
-const MAP_FILTER_LABELS: Record<MapFilter, string> = {
-  core: "Core Map",
-  expanded: "Expanded Map",
-  all_concepts: "All Concepts",
-};
-
 function MapContent() {
   const searchParams = useSearchParams();
   const highlightParam = searchParams.get("highlight");
@@ -101,7 +92,6 @@ function MapContent() {
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [books, setBooks] = useState<Book[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>("all");
-  const [mapFilter, setMapFilter] = useState<MapFilter>("expanded");
   const [centerNodeId, setCenterNodeId] = useState<number | null>(highlightParam ? Number(highlightParam) : null);
   const [pathFromId, setPathFromId] = useState<number | null>(null);
   const [pathToId, setPathToId] = useState<number | null>(null);
@@ -120,6 +110,7 @@ function MapContent() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [remapModel, setRemapModel] = useState("gpt-4o-mini");
   const [remapping, setRemapping] = useState(false);
+  const [connectingOrphans, setConnectingOrphans] = useState(false);
   const [insightModel, setInsightModel] = useState("gpt-4o-mini");
   const [insight, setInsight] = useState<MapInsight | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
@@ -133,6 +124,26 @@ function MapContent() {
     highlightParam ? Number(highlightParam) : null
   );
   const pendingNodeIdRef = useRef<number | null>(null);
+
+  const runConnectOrphans = async () => {
+    setConnectingOrphans(true);
+    try {
+      const res = await fetch("/api/connect-orphans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: remapModel }),
+      });
+      const data = await res.json() as { orphanCount?: number; newRelations?: number; message?: string; error?: string };
+      if (!res.ok) { toast.error(data.error ?? "孤立接続に失敗しました"); return; }
+      if (data.message) { toast.info(data.message); return; }
+      toast.success(`孤立接続完了: ${data.orphanCount}件処理 / 新規関係 ${data.newRelations}件`);
+      loadGraph();
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setConnectingOrphans(false);
+    }
+  };
 
   const runGlobalRemap = async () => {
     setRemapping(true);
@@ -156,7 +167,6 @@ function MapContent() {
   const loadGraph = useCallback(() => {
     const params = new URLSearchParams();
     if (domain !== "all") params.set("domain", domain);
-    params.set("mapFilter", mapFilter);
     fetch(`/api/graph?${params}`)
       .then((r) => r.json())
       .then((data) => {
@@ -165,7 +175,7 @@ function MapContent() {
           setEdges(data.edges);
         }
       });
-  }, [domain, mapFilter]);
+  }, [domain]);
 
   useEffect(() => {
     loadGraph();
@@ -236,10 +246,7 @@ function MapContent() {
     setChatMessages([]);
   }, []);
 
-  const activeConceptIds = useMemo(
-    () => selectedNodeIds.length > 0 ? selectedNodeIds : highlightId != null ? [highlightId] : [],
-    [highlightId, selectedNodeIds]
-  );
+  const activeConceptIds = selectedNodeIds.length > 0 ? selectedNodeIds : highlightId != null ? [highlightId] : [];
 
   const summarizeSelection = useCallback(() => {
     if (activeConceptIds.length === 0) {
@@ -265,7 +272,8 @@ function MapContent() {
         toast.error(message);
       })
       .finally(() => setInsightLoading(false));
-  }, [activeConceptIds, insightModel]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightId, selectedNodeIds, insightModel]);
 
   const sendChat = useCallback(() => {
     const trimmed = chatInput.trim();
@@ -289,6 +297,7 @@ function MapContent() {
       })
       .catch((err) => toast.error(err instanceof Error ? err.message : "エラーが発生しました"))
       .finally(() => setChatLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatInput, chatLoading, chatMessages, activeConceptIds, insightModel]);
 
   const analyzedBooks = useMemo(() => books.filter((b) => b.analyzeStatus === "done"), [books]);
@@ -303,6 +312,17 @@ function MapContent() {
     : nodes.filter((node) => node.bookIds.some((bookId) => selectedBookIds.includes(bookId))).length;
   const bookTitleById = new Map(books.map((book) => [book.id, book.title]));
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+
+  const connectedNodeIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const e of edges) { ids.add(e.fromConceptId); ids.add(e.toConceptId); }
+    return ids;
+  }, [edges]);
+
+  const orphanCount = useMemo(
+    () => nodes.filter((n) => !connectedNodeIds.has(n.id)).length,
+    [nodes, connectedNodeIds]
+  );
 
   const displayedGraph = useMemo(() => {
     switch (viewMode) {
@@ -378,23 +398,6 @@ function MapContent() {
               ))}
             </SelectContent>
           </Select>
-          <Select
-            value={mapFilter}
-            onValueChange={(v) => {
-              clearSelectionSummary();
-              setMapFilter((v ?? "expanded") as MapFilter);
-            }}
-          >
-            <SelectTrigger className="w-40 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(MAP_FILTER_LABELS).map(([value, label]) => (
-                <SelectItem key={value} value={value}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
           <Select
             value={viewMode}
             onValueChange={(v) => {
@@ -634,12 +637,24 @@ function MapContent() {
             size="sm"
             variant="outline"
             className="h-8 gap-1.5 text-xs"
-            disabled={remapping}
+            disabled={remapping || connectingOrphans}
             onClick={runGlobalRemap}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${remapping ? "animate-spin" : ""}`} />
             {remapping ? "リマップ中..." : "全体リマップ"}
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            disabled={remapping || connectingOrphans}
+            onClick={runConnectOrphans}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${connectingOrphans ? "animate-spin" : ""}`} />
+            {connectingOrphans ? "接続中..." : "孤立を接続"}
+          </Button>
+
           {selectedBooks.length > 0 && (
             <div className="flex max-w-full flex-wrap items-center gap-1.5">
               {selectedBooks.slice(0, 4).map((book) => (
