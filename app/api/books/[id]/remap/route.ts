@@ -25,6 +25,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       domain: concepts.domain,
       importance: bookConcepts.importance,
       excerpt: bookConcepts.excerpt,
+      sourceEvidenceText: bookConcepts.sourceEvidenceText,
     })
     .from(bookConcepts)
     .innerJoin(concepts, eq(bookConcepts.conceptId, concepts.id))
@@ -50,7 +51,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     conceptLevel: "supporting" as const,
     conceptType: "theme" as const,
     specificity: "domain_specific" as const,
-    sourceEvidence: { sourceType: "table_of_contents" as const, evidenceText: "" },
+    sourceEvidence: { sourceType: "table_of_contents" as const, evidenceText: r.sourceEvidenceText ?? "" },
   }));
 
   // Replace book-scoped relations only
@@ -82,13 +83,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       toConceptId: normalized.toConceptId,
       relationType: normalized.relationType,
       evidence: rel.evidence,
+      confidence: rel.confidence,
       bookId,
-      source: "llm",
+      source: rel.source ?? "llm",
     });
   }
 
   // Clean up stale cross-book relations involving concepts no longer in this book
-  const currentConceptIds = new Set(conceptRows.map((r) => r.id));
   const allBookLinks = await db.select({ conceptId: bookConcepts.conceptId }).from(bookConcepts);
   const allLinkedConceptIds = new Set(allBookLinks.map((l) => l.conceptId));
 

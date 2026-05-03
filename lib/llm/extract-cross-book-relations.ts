@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { isRelationType, RELATION_TYPES, type RelationType } from "@/lib/relations";
 import { chatWithRetry } from "./openai-client";
+import { isValidRelationEvidence } from "@/lib/relations/evidence";
 
 export interface CrossBookConcept {
   id: number;
@@ -109,7 +110,8 @@ Rules:
 - Avoid duplicates or near-duplicates of existing relationships.
 - Save only relationships with confidence >= 0.65.
 - Use weight 0.3-1.0 based on strength and usefulness.
-- Use exact concept names from the input.`,
+- Use exact concept names from the input.
+- Evidence must be copied from one provided book excerpt and must include one endpoint concept name or alias.`,
       },
       {
         role: "user",
@@ -138,6 +140,7 @@ Return up to ${maxRelations} cross-book relationships that would make the map fe
   const input = JSON.parse(toolCall.function.arguments) as { relations?: unknown[] };
   const newNames = new Set(newConcepts.map((concept) => concept.name));
   const existingNames = new Set(existingConcepts.map((concept) => concept.name));
+  const conceptByName = new Map([...newConcepts, ...existingConcepts].map((concept) => [concept.name, concept]));
   const seen = new Set<string>();
   const perNewConcept = new Map<string, number>();
 
@@ -150,6 +153,22 @@ Return up to ${maxRelations} cross-book relationships that would make the map fe
     const fromIsExisting = existingNames.has(relation.from);
     const toIsExisting = existingNames.has(relation.to);
     if (!((fromIsNew && toIsExisting) || (toIsNew && fromIsExisting))) return [];
+    const fromConcept = conceptByName.get(relation.from);
+    const toConcept = conceptByName.get(relation.to);
+    if (!fromConcept || !toConcept) return [];
+    if (!isValidRelationEvidence(
+      relation.evidence,
+      { name: fromConcept.name, aliases: fromConcept.aliases ?? [] },
+      { name: toConcept.name, aliases: toConcept.aliases ?? [] },
+      [
+        fromConcept.excerpt,
+        ...(fromConcept.books?.map((book) => book.excerpt) ?? []),
+        toConcept.excerpt,
+        ...(toConcept.books?.map((book) => book.excerpt) ?? []),
+      ]
+    )) {
+      return [];
+    }
 
     const newConceptName = fromIsNew ? relation.from : relation.to;
     const count = perNewConcept.get(newConceptName) ?? 0;
@@ -191,10 +210,11 @@ function formatConcepts(concepts: CrossBookConcept[]) {
     .map((concept) => {
       const aliases = concept.aliases?.length ? ` aliases: ${concept.aliases.join(" / ")}` : "";
       const books = concept.books?.length
-        ? ` books: ${concept.books.map((book) => `${book.title} (${book.author})`).join("; ")}`
+        ? ` books: ${concept.books.map((book) => `${book.title} (${book.author}) excerpt: ${book.excerpt ?? ""}`).join("; ")}`
         : "";
       const importance = concept.importance ? ` importance ${concept.importance}/5` : "";
-      return `- ${concept.name} [${concept.domain}]${importance}${aliases}: ${concept.description ?? "No description"}${books}`;
+      const excerpt = concept.excerpt ? ` excerpt: ${concept.excerpt}` : "";
+      return `- ${concept.name} [${concept.domain}]${importance}${aliases}: ${concept.description ?? "No description"}${excerpt}${books}`;
     })
     .join("\n");
 }

@@ -97,7 +97,8 @@ export const conceptRelations = sqliteTable("concept_relations", {
     enum: RELATION_TYPES,
   }).notNull().default("related"),
   weight: real("weight").notNull().default(1.0),
-  source: text("source", { enum: ["llm", "manual"] }).notNull().default("llm"),
+  confidence: real("confidence"),
+  source: text("source", { enum: ["llm", "manual", "fallback"] }).notNull().default("llm"),
   evidence: text("evidence"),
   bookId: integer("book_id").references(() => books.id, { onDelete: "set null" }),
 });

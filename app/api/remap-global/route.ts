@@ -34,6 +34,7 @@ export async function POST(req: Request) {
         domain: concepts.domain,
         importance: bookConcepts.importance,
         excerpt: bookConcepts.excerpt,
+        sourceEvidenceText: bookConcepts.sourceEvidenceText,
       })
       .from(bookConcepts)
       .innerJoin(concepts, eq(bookConcepts.conceptId, concepts.id))
@@ -56,7 +57,7 @@ export async function POST(req: Request) {
       conceptLevel: "supporting" as const,
       conceptType: "theme" as const,
       specificity: "domain_specific" as const,
-      sourceEvidence: { sourceType: "table_of_contents" as const, evidenceText: "" },
+      sourceEvidence: { sourceType: "table_of_contents" as const, evidenceText: r.sourceEvidenceText ?? "" },
     }));
 
     const relations = await extractRelations(book.title, extracted, model);
@@ -83,8 +84,9 @@ export async function POST(req: Request) {
         toConceptId: normalized.toConceptId,
         relationType: normalized.relationType,
         evidence: rel.evidence,
+        confidence: rel.confidence,
         bookId: book.id,
-        source: "llm",
+        source: rel.source ?? "llm",
       });
     }
 

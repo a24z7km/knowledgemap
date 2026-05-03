@@ -11,6 +11,11 @@ import {
   type CrossBookRelationContext,
 } from "@/lib/llm/extract-cross-book-relations";
 import { conceptLookupKeys, mergeAliases, parseAliases } from "@/lib/concepts/normalize";
+import {
+  conceptDiagnosticInputFromConcept,
+  findDuplicateConceptCandidates,
+  type ConceptDuplicateCandidate,
+} from "@/lib/concepts/diagnostics";
 import { scoreConceptCandidates } from "@/lib/concepts/scoring";
 import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
 import { fetchBookMetadata, type SearchQualityStats, type SourceQualityStats } from "@/lib/metadata/fetch-book-metadata";
@@ -58,6 +63,7 @@ async function runAnalysis(
   let sourceQuality: SourceQualityStats | null = null;
   let searchQuality: SearchQualityStats | null = null;
   let targetCount: TargetCount = { min: 12, max: 30 };
+  let duplicateCandidates: ConceptDuplicateCandidate[] = [];
 
   try {
     const [run] = await db
@@ -66,7 +72,7 @@ async function runAnalysis(
         bookId,
         model,
         status: "running",
-        sourceStats: JSON.stringify(buildSourceStats({ tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, searchQuality, targetCount })),
+        sourceStats: JSON.stringify(buildSourceStats({ tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, searchQuality, targetCount, duplicateCandidates })),
       })
       .returning({ id: extractionRuns.id });
     extractionRunId = run.id;
@@ -329,7 +335,9 @@ async function runAnalysis(
         });
       }
     }
-    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount });
+    const currentConcepts = await db.select().from(concepts);
+    duplicateCandidates = findDuplicateConceptCandidates(currentConcepts.map(conceptDiagnosticInputFromConcept));
+    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount, duplicateCandidates });
 
     if (isCancellationRequested(bookId)) {
       await finishExtractionRun(extractionRunId, "cancelled", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
@@ -362,8 +370,9 @@ async function runAnalysis(
         toConceptId: normalized.toConceptId,
         relationType: normalized.relationType,
         evidence: rel.evidence,
+        confidence: rel.confidence,
         bookId,
-        source: "llm",
+        source: rel.source ?? "llm",
       });
     }
 
@@ -385,12 +394,12 @@ async function runAnalysis(
     await saveCrossBookRelations(crossBookRelations, crossBookContext);
 
     await db.update(books).set({ analyzeStatus: "done" }).where(eq(books.id, bookId));
-    await finishExtractionRun(extractionRunId, "completed", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount });
+    await finishExtractionRun(extractionRunId, "completed", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount, duplicateCandidates });
   } catch (err) {
     await finishExtractionRun(
       extractionRunId,
       "failed",
-      { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount },
+      { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons, sourceQuality, targetCount, duplicateCandidates },
       String(err)
     );
     await db
@@ -409,6 +418,7 @@ interface ExtractionSourceStats {
   sourceQuality?: SourceQualityStats | null;
   searchQuality?: SearchQualityStats | null;
   targetCount?: TargetCount;
+  duplicateCandidates?: ConceptDuplicateCandidate[];
 }
 
 function buildSourceStats(stats: ExtractionSourceStats) {
@@ -421,6 +431,7 @@ function buildSourceStats(stats: ExtractionSourceStats) {
     sourceQuality: stats.sourceQuality ?? null,
     searchQuality: stats.searchQuality ?? null,
     targetCount: stats.targetCount ?? null,
+    duplicateCandidates: stats.duplicateCandidates ?? [],
   };
 }
 
@@ -812,6 +823,7 @@ async function saveCrossBookRelations(
       weight: relation.weight,
       source: "llm",
       bookId: null,
+      confidence: relation.confidence,
       evidence: `${relation.evidence}\n\nReason: ${relation.reason}\nConfidence: ${relation.confidence.toFixed(2)}`,
     });
     savedRelationKeys.add(key);

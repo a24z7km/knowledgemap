@@ -2,12 +2,15 @@ import OpenAI from "openai";
 import type { ExtractedConcept } from "./extract-concepts";
 import { isRelationType, RELATION_TYPES, type RelationType } from "@/lib/relations";
 import { chatWithRetry } from "./openai-client";
+import { isValidRelationEvidence } from "@/lib/relations/evidence";
 
 export interface ExtractedRelation {
   from: string;
   to: string;
   type: RelationType;
   evidence: string;
+  confidence: number;
+  source?: "llm" | "fallback";
 }
 
 function buildRelationTool(minItems: number, maxItems: number): OpenAI.ChatCompletionTool {
@@ -33,8 +36,9 @@ function buildRelationTool(minItems: number, maxItems: number): OpenAI.ChatCompl
                     "prerequisite: A must be understood before B; same_family_as: A and B are sibling concepts in the same family/framework; operationalizes: A turns B into a concrete practice/tool; supports: A provides evidence or reinforcement for B; contrasts_with: A and B illuminate a meaningful difference; contradicts: A and B conflict; extends: B builds on A; applies_to: A is applied in context of B; example_of: A is an example/instance of B; reframes: A changes how B is interpreted; mitigates: A reduces a risk/problem in B; related: only when no more specific type fits",
                 },
                 evidence: { type: "string", description: "Brief justification for this relationship" },
+                confidence: { type: "number", minimum: 0, maximum: 1 },
               },
-              required: ["from", "to", "type", "evidence"],
+              required: ["from", "to", "type", "evidence", "confidence"],
             },
             minItems,
             maxItems,
@@ -54,13 +58,18 @@ export async function extractRelations(
   const minRelations = Math.max(concepts.length, Math.ceil(concepts.length * 1.5));
   const maxRelations = Math.max(minRelations, concepts.length * 3);
   const conceptList = concepts
-    .map((c) => `- ${c.name} (${c.domain}, importance ${c.importance}/5): ${c.description}`)
+    .map((c) => {
+      const aliases = c.nameJa ? ` aliases: ${c.nameJa}` : "";
+      const evidence = c.sourceEvidence?.evidenceText || c.excerpt || c.evidenceText || "";
+      return `- ${c.name} (${c.domain}, importance ${c.importance}/5)${aliases}: ${c.description}\n  Evidence: ${evidence}`;
+    })
     .join("\n");
+  const conceptByName = new Map(concepts.map((concept) => [concept.name, concept]));
 
   const response = await chatWithRetry({
     model,
     max_completion_tokens: 8192,
-    tools: [buildRelationTool(minRelations, maxRelations)],
+    tools: [buildRelationTool(0, maxRelations)],
     tool_choice: { type: "function", function: { name: "save_relations" } },
     messages: [
       {
@@ -91,7 +100,8 @@ Create enough edges for a readable knowledge map:
 - When sibling components belong to the same framework or argument (e.g. Habit 1 and Habit 2), link them with same_family_as.
 - Connect practical methods to the concepts they apply or operationalize.
 - Avoid self-loops and duplicate from/to pairs.
-- Do not invent concepts outside the provided list.`,
+- Do not invent concepts outside the provided list.
+- Evidence must be copied from the provided Evidence lines and must include one endpoint concept name or alias.`,
       },
       {
         role: "user",
@@ -99,7 +109,7 @@ Create enough edges for a readable knowledge map:
 
 ${conceptList}
 
-Return ${minRelations}-${maxRelations} relationships. Prefer a connected graph over isolated concept clusters. If a concept is a framework, principle, habit, or mental model central to the book, connect it to multiple relevant concepts.`,
+Return up to ${maxRelations} evidence-backed relationships. Prefer a connected graph over isolated concept clusters only when the source evidence supports the relation. If a concept is a framework, principle, habit, or mental model central to the book, connect it to multiple relevant concepts when evidence is available.`,
       },
     ],
   });
@@ -120,7 +130,27 @@ Return ${minRelations}-${maxRelations} relationships. Prefer a connected graph o
     const from = nameMap.get(normalize(r.from));
     const to = nameMap.get(normalize(r.to));
     if (!from || !to || from === to) return [];
-    return [{ ...r, from, to, type: isRelationType(r.type) ? r.type : "related" }];
+    const fromConcept = conceptByName.get(from);
+    const toConcept = conceptByName.get(to);
+    if (!fromConcept || !toConcept) return [];
+    const confidence = clampConfidence((r as { confidence?: unknown }).confidence);
+    if (!isValidRelationEvidence(
+      r.evidence,
+      { name: fromConcept.name, aliases: [fromConcept.nameJa].filter(Boolean) as string[] },
+      { name: toConcept.name, aliases: [toConcept.nameJa].filter(Boolean) as string[] },
+      [
+        fromConcept.sourceEvidence?.evidenceText,
+        fromConcept.excerpt,
+        fromConcept.evidenceText,
+        toConcept.sourceEvidence?.evidenceText,
+        toConcept.excerpt,
+        toConcept.evidenceText,
+      ]
+    )) {
+      return [];
+    }
+
+    return [{ ...r, from, to, type: isRelationType(r.type) ? r.type : "related", confidence, source: "llm" as const }];
   });
 
   // Deduplicate
@@ -134,43 +164,11 @@ Return ${minRelations}-${maxRelations} relationships. Prefer a connected graph o
 
   if (deduped.length >= minRelations) return deduped;
 
-  const rankedConcepts = [...concepts].sort((a, b) => b.importance - a.importance);
-  const fallbackRelations: ExtractedRelation[] = [];
-  const addRelation = (from: string, to: string, type: RelationType, evidence: string) => {
-    if (from === to) return;
-    const key = `${from}||${to}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    fallbackRelations.push({ from, to, type, evidence });
-  };
+  return deduped;
+}
 
-  for (const concept of rankedConcepts) {
-    const related = rankedConcepts
-      .filter((candidate) => candidate.name !== concept.name && candidate.domain === concept.domain)
-      .slice(0, 2);
-
-    for (const candidate of related) {
-      addRelation(
-        concept.name,
-        candidate.name,
-        "same_family_as",
-        "Both concepts are important in the same domain for this book."
-      );
-      if (deduped.length + fallbackRelations.length >= minRelations) {
-        return [...deduped, ...fallbackRelations];
-      }
-    }
-  }
-
-  for (let i = 0; i < rankedConcepts.length - 1; i += 1) {
-    addRelation(
-      rankedConcepts[i].name,
-      rankedConcepts[i + 1].name,
-      "related",
-      "Both concepts appear as important ideas in this book, but no more specific relationship was inferred."
-    );
-    if (deduped.length + fallbackRelations.length >= minRelations) break;
-  }
-
-  return [...deduped, ...fallbackRelations];
+function clampConfidence(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(1, Math.max(0, value))
+    : 0.5;
 }

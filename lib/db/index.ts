@@ -75,7 +75,8 @@ function getDb() {
       relation_type TEXT NOT NULL DEFAULT 'related'
         CHECK(relation_type IN (${relationTypeSqlList()})),
       weight REAL NOT NULL DEFAULT 1.0,
-      source TEXT NOT NULL DEFAULT 'llm' CHECK(source IN ('llm','manual')),
+      confidence REAL,
+      source TEXT NOT NULL DEFAULT 'llm' CHECK(source IN ('llm','manual','fallback')),
       evidence TEXT,
       book_id INTEGER REFERENCES books(id) ON DELETE SET NULL
     );
@@ -118,6 +119,7 @@ function getDb() {
   `);
 
   ensureRelationTypeConstraint(sqlite);
+  ensureConceptRelationColumns(sqlite);
   ensureAnalyzeStatusConstraint(sqlite);
   ensureBookUserSourceColumns(sqlite);
   ensureConceptScoringColumns(sqlite);
@@ -440,7 +442,7 @@ function ensureRelationTypeConstraint(sqlite: Database.Database) {
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'concept_relations'")
     .get() as { sql?: string } | undefined;
 
-  if (table?.sql?.includes("same_family_as")) return;
+  if (table?.sql?.includes("same_family_as") && table.sql.includes("confidence") && table.sql.includes("'fallback'")) return;
 
   sqlite.exec("PRAGMA foreign_keys = OFF");
   const migrateRelationTypes = sqlite.transaction(() => {
@@ -452,7 +454,8 @@ function ensureRelationTypeConstraint(sqlite: Database.Database) {
         relation_type TEXT NOT NULL DEFAULT 'related'
           CHECK(relation_type IN (${relationTypeSqlList()})),
         weight REAL NOT NULL DEFAULT 1.0,
-        source TEXT NOT NULL DEFAULT 'llm' CHECK(source IN ('llm','manual')),
+        confidence REAL,
+        source TEXT NOT NULL DEFAULT 'llm' CHECK(source IN ('llm','manual','fallback')),
         evidence TEXT,
         book_id INTEGER REFERENCES books(id) ON DELETE SET NULL
       );
@@ -463,6 +466,7 @@ function ensureRelationTypeConstraint(sqlite: Database.Database) {
         to_concept_id,
         relation_type,
         weight,
+        confidence,
         source,
         evidence,
         book_id
@@ -476,7 +480,11 @@ function ensureRelationTypeConstraint(sqlite: Database.Database) {
           ELSE 'related'
         END,
         weight,
-        source,
+        ${table?.sql?.includes("confidence") ? "confidence" : "NULL"},
+        CASE
+          WHEN source IN ('llm','manual','fallback') THEN source
+          ELSE 'llm'
+        END,
         evidence,
         book_id
       FROM concept_relations;
@@ -490,6 +498,15 @@ function ensureRelationTypeConstraint(sqlite: Database.Database) {
     migrateRelationTypes();
   } finally {
     sqlite.exec("PRAGMA foreign_keys = ON");
+  }
+}
+
+function ensureConceptRelationColumns(sqlite: Database.Database) {
+  const columns = sqlite.prepare("PRAGMA table_info(concept_relations)").all() as { name: string }[];
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("confidence")) {
+    sqlite.exec("ALTER TABLE concept_relations ADD COLUMN confidence REAL");
   }
 }
 
