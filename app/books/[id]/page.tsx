@@ -215,7 +215,8 @@ export default function BookDetailPage() {
     setStep1Running(true);
     try {
       await persistSourceFields();
-      sourceDirtyRef.current = false;
+      // フォームは保存済みだが上書きしたくないので dirty を維持
+      sourceDirtyRef.current = true;
       const res = await fetch(`/api/books/${id}/step1`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

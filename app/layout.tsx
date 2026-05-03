@@ -17,7 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ja" className={`${geistSans.variable} ${geistMono.variable} h-full`}>
       <body className="h-full flex flex-col bg-background text-foreground antialiased">
         <Navigation />
-        <main className="flex-1 overflow-hidden">{children}</main>
+        <main className="flex-1 overflow-y-auto">{children}</main>
         <Toaster richColors position="bottom-right" />
       </body>
     </html>

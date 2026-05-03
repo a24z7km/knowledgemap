@@ -86,8 +86,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     draftsToInsert.push({ bookId, source: "user_input", text: book.userQuotes.trim(), sourceUrl: null, evidenceText: null });
   }
 
-  // Insert all drafts (deduplicate by text+source)
-  const seen = new Set<string>();
+  // Deduplicate: exclude items already stored (including soft-deleted) and intra-batch dups
+  const existing = await db
+    .select({ source: bookKeywordDrafts.source, text: bookKeywordDrafts.text })
+    .from(bookKeywordDrafts)
+    .where(eq(bookKeywordDrafts.bookId, bookId));
+  const seen = new Set<string>(existing.map((e) => `${e.source}||${e.text}`));
+
   const deduped = draftsToInsert.filter((d) => {
     const key = `${d.source}||${d.text}`;
     if (seen.has(key)) return false;
