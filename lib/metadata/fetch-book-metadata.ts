@@ -3,6 +3,7 @@ export interface MetadataSource {
   description: string;
   tableOfContents: string[];
   subjects: string[];
+  review?: string;
   sourceUrl: string | null;
 }
 
@@ -13,6 +14,23 @@ export interface BookMetadata {
   publishedDate: string;
   pageCount: number | null;
   sources: MetadataSource[];
+}
+
+export interface SourceQualityStats {
+  descriptionChars: number;
+  tocLines: number;
+  subjectsCount: number;
+  userNotesChars: number;
+  reviewChars: number;
+  total: number;
+  sourceTextChars?: number;
+}
+
+export interface SearchQualityStats {
+  hasTitle: boolean;
+  hasAuthor: boolean;
+  hasSubtitle: boolean;
+  hasIsbn: boolean;
 }
 
 interface GoogleBooksVolume {

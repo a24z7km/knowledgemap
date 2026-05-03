@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { books, bookConcepts, concepts } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { books, bookConcepts, concepts, extractionRuns } from "@/lib/db/schema";
+import { desc, eq } from "drizzle-orm";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -9,6 +9,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const db = getDb();
     const [book] = await db.select().from(books).where(eq(books.id, Number(id)));
     if (!book) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    const [latestExtractionRun] = await db
+      .select()
+      .from(extractionRuns)
+      .where(eq(extractionRuns.bookId, Number(id)))
+      .orderBy(desc(extractionRuns.createdAt))
+      .limit(1);
 
     const bcs = await db
       .select({
@@ -27,7 +33,30 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       .innerJoin(concepts, eq(bookConcepts.conceptId, concepts.id))
       .where(eq(bookConcepts.bookId, Number(id)));
 
-    return NextResponse.json({ book, concepts: bcs });
+    return NextResponse.json({ book, concepts: bcs, latestExtractionRun: latestExtractionRun ?? null });
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const body = await req.json().catch(() => ({}));
+    const db = getDb();
+    const [book] = await db
+      .update(books)
+      .set({
+        notes: body.notes ?? null,
+        userToc: body.userToc ?? null,
+        userSummary: body.userSummary ?? null,
+        analyzeStatus: "pending",
+        analyzeError: null,
+      })
+      .where(eq(books.id, Number(id)))
+      .returning();
+    if (!book) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json(book);
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

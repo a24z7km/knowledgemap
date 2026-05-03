@@ -27,7 +27,7 @@ export type Specificity = (typeof SPECIFICITY_LEVELS)[number];
 export const EXTRACTION_CATEGORIES = ["thesis", "framework", "component", "practice", "outcome", "context"] as const;
 export type ExtractionCategory = (typeof EXTRACTION_CATEGORIES)[number];
 
-export const GROUNDING_TYPES = ["source_explicit", "source_implied", "known_book", "model_prior"] as const;
+export const GROUNDING_TYPES = ["source_explicit", "source_supported", "metadata_only", "model_prior"] as const;
 export type GroundingType = (typeof GROUNDING_TYPES)[number];
 
 export const CONCEPT_STATUSES = ["promoted", "candidate", "rejected"] as const;
@@ -77,8 +77,8 @@ export const EXTRACTION_CATEGORY_LABELS: Record<ExtractionCategory, string> = {
 
 export const GROUNDING_TYPE_LABELS: Record<GroundingType, string> = {
   source_explicit: "明示",
-  source_implied: "示唆",
-  known_book: "既知書籍",
+  source_supported: "資料支持",
+  metadata_only: "書誌のみ",
   model_prior: "モデル推定",
 };
 

@@ -16,6 +16,8 @@ export const books = sqliteTable("books", {
   author: text("author").notNull(),
   readStatus: text("read_status", { enum: ["read", "reading", "want"] }).notNull().default("read"),
   notes: text("notes"),
+  userToc: text("user_toc"),
+  userSummary: text("user_summary"),
   analyzeStatus: text("analyze_status", { enum: ["pending", "analyzing", "done", "error", "failed"] }).notNull().default("pending"),
   analyzeError: text("analyze_error"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),

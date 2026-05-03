@@ -30,7 +30,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const { title, author, readStatus, notes } = await req.json();
+    const { title, author, readStatus, notes, userToc, userSummary } = await req.json();
     if (!title || !author) {
       return NextResponse.json({ error: "title and author are required" }, { status: 400 });
     }
@@ -38,7 +38,14 @@ export async function POST(req: Request) {
     const db = getDb();
     const [book] = await db
       .insert(books)
-      .values({ title, author, readStatus: readStatus ?? "read", notes: notes ?? null })
+      .values({
+        title,
+        author,
+        readStatus: readStatus ?? "read",
+        notes: notes ?? null,
+        userToc: userToc ?? null,
+        userSummary: userSummary ?? null,
+      })
       .returning();
 
     return NextResponse.json(book, { status: 201 });

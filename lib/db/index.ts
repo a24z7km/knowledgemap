@@ -37,6 +37,8 @@ function getDb() {
       author TEXT NOT NULL,
       read_status TEXT NOT NULL DEFAULT 'read' CHECK(read_status IN ('read','reading','want')),
       notes TEXT,
+      user_toc TEXT,
+      user_summary TEXT,
       analyze_status TEXT NOT NULL DEFAULT 'pending' CHECK(analyze_status IN (${analyzeStatusSqlList()})),
       analyze_error TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -117,7 +119,9 @@ function getDb() {
 
   ensureRelationTypeConstraint(sqlite);
   ensureAnalyzeStatusConstraint(sqlite);
+  ensureBookUserSourceColumns(sqlite);
   ensureConceptScoringColumns(sqlite);
+  ensureGroundingTypeConstraints(sqlite);
   ensureBookConceptMetadataColumns(sqlite);
   ensureBookConceptSourceEvidenceColumns(sqlite);
   normalizeExistingConceptRelations(sqlite);
@@ -158,6 +162,138 @@ function groundingTypeSqlList() {
 
 function conceptStatusSqlList() {
   return CONCEPT_STATUSES.map((status) => `'${status}'`).join(",");
+}
+
+function ensureBookUserSourceColumns(sqlite: Database.Database) {
+  const columns = sqlite.prepare("PRAGMA table_info(books)").all() as { name: string }[];
+  const columnNames = new Set(columns.map((column) => column.name));
+
+  if (!columnNames.has("user_toc")) {
+    sqlite.exec("ALTER TABLE books ADD COLUMN user_toc TEXT");
+  }
+  if (!columnNames.has("user_summary")) {
+    sqlite.exec("ALTER TABLE books ADD COLUMN user_summary TEXT");
+  }
+}
+
+function groundingTypeSelectExpression(column = "grounding_type") {
+  return `CASE
+    WHEN ${column} = 'source_implied' THEN 'source_supported'
+    WHEN ${column} = 'known_book' THEN 'model_prior'
+    WHEN ${column} IN (${groundingTypeSqlList()}) THEN ${column}
+    ELSE 'model_prior'
+  END`;
+}
+
+function ensureGroundingTypeConstraints(sqlite: Database.Database) {
+  const conceptTable = sqlite
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'concepts'")
+    .get() as { sql?: string } | undefined;
+  const rawConceptTable = sqlite
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'raw_concepts'")
+    .get() as { sql?: string } | undefined;
+
+  const conceptNeedsMigration = conceptTable?.sql?.includes("source_implied") || conceptTable?.sql?.includes("known_book");
+  const rawConceptNeedsMigration = rawConceptTable?.sql?.includes("source_implied") || rawConceptTable?.sql?.includes("known_book");
+
+  if (!conceptNeedsMigration && !rawConceptNeedsMigration) return;
+
+  sqlite.exec("PRAGMA foreign_keys = OFF");
+  const migrateGroundingTypes = sqlite.transaction(() => {
+    if (conceptNeedsMigration) {
+      sqlite.exec(`
+        CREATE TABLE concepts_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL UNIQUE,
+          aliases TEXT NOT NULL DEFAULT '[]',
+          description TEXT,
+          domain TEXT NOT NULL DEFAULT 'general',
+          grounding_type TEXT NOT NULL DEFAULT 'source_explicit' CHECK(grounding_type IN (${groundingTypeSqlList()})),
+          category TEXT NOT NULL DEFAULT 'context' CHECK(category IN (${extractionCategorySqlList()})),
+          final_score REAL NOT NULL DEFAULT 1.0,
+          status TEXT NOT NULL DEFAULT 'promoted' CHECK(status IN (${conceptStatusSqlList()})),
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        INSERT INTO concepts_new (
+          id, name, aliases, description, domain, grounding_type, category, final_score, status, created_at
+        )
+        SELECT
+          id,
+          name,
+          aliases,
+          description,
+          domain,
+          ${groundingTypeSelectExpression()},
+          category,
+          final_score,
+          status,
+          created_at
+        FROM concepts;
+
+        DROP TABLE concepts;
+        ALTER TABLE concepts_new RENAME TO concepts;
+      `);
+    }
+
+    if (rawConceptNeedsMigration) {
+      sqlite.exec(`
+        CREATE TABLE raw_concepts_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          extraction_run_id INTEGER REFERENCES extraction_runs(id) ON DELETE CASCADE,
+          book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+          raw_index INTEGER NOT NULL DEFAULT 0,
+          name TEXT NOT NULL,
+          name_ja TEXT,
+          description TEXT,
+          category TEXT NOT NULL DEFAULT 'context' CHECK(category IN (${extractionCategorySqlList()})),
+          grounding_type TEXT NOT NULL DEFAULT 'source_explicit' CHECK(grounding_type IN (${groundingTypeSqlList()})),
+          evidence_text TEXT,
+          importance INTEGER NOT NULL DEFAULT 3,
+          specificity INTEGER NOT NULL DEFAULT 3,
+          confidence REAL NOT NULL DEFAULT 0.5,
+          source_type TEXT,
+          source_text TEXT,
+          payload TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        INSERT INTO raw_concepts_new (
+          id, extraction_run_id, book_id, raw_index, name, name_ja, description, category,
+          grounding_type, evidence_text, importance, specificity, confidence, source_type, source_text,
+          payload, created_at
+        )
+        SELECT
+          id,
+          extraction_run_id,
+          book_id,
+          raw_index,
+          name,
+          name_ja,
+          description,
+          category,
+          ${groundingTypeSelectExpression()},
+          evidence_text,
+          importance,
+          specificity,
+          confidence,
+          source_type,
+          source_text,
+          payload,
+          created_at
+        FROM raw_concepts;
+
+        DROP TABLE raw_concepts;
+        ALTER TABLE raw_concepts_new RENAME TO raw_concepts;
+      `);
+    }
+  });
+
+  try {
+    migrateGroundingTypes();
+  } finally {
+    sqlite.exec("PRAGMA foreign_keys = ON");
+  }
 }
 
 function ensureConceptScoringColumns(sqlite: Database.Database) {
@@ -250,6 +386,8 @@ function ensureAnalyzeStatusConstraint(sqlite: Database.Database) {
         author TEXT NOT NULL,
         read_status TEXT NOT NULL DEFAULT 'read' CHECK(read_status IN ('read','reading','want')),
         notes TEXT,
+        user_toc TEXT,
+        user_summary TEXT,
         analyze_status TEXT NOT NULL DEFAULT 'pending' CHECK(analyze_status IN (${analyzeStatusSqlList()})),
         analyze_error TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -261,6 +399,8 @@ function ensureAnalyzeStatusConstraint(sqlite: Database.Database) {
         author,
         read_status,
         notes,
+        user_toc,
+        user_summary,
         analyze_status,
         analyze_error,
         created_at
@@ -271,6 +411,8 @@ function ensureAnalyzeStatusConstraint(sqlite: Database.Database) {
         author,
         read_status,
         notes,
+        NULL,
+        NULL,
         CASE
           WHEN analyze_status IN (${analyzeStatusSqlList()}) THEN analyze_status
           ELSE 'failed'

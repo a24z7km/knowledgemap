@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
@@ -8,8 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { ArrowLeft, Play, Trash2, Brain, Square } from "lucide-react";
-import type { Book } from "@/lib/db/schema";
+import type { Book, ExtractionRun } from "@/lib/db/schema";
 import { domainBadgeClass } from "@/lib/domains";
 import { conceptMetadataLabels } from "@/lib/concept-metadata";
 import { analysisErrorMessage, analysisErrorTitle } from "@/lib/analysis-errors";
@@ -32,16 +34,28 @@ export default function BookDetailPage() {
   const router = useRouter();
   const [book, setBook] = useState<Book | null>(null);
   const [concepts, setConcepts] = useState<ConceptRow[]>([]);
+  const [latestExtractionRun, setLatestExtractionRun] = useState<ExtractionRun | null>(null);
+  const [sourceForm, setSourceForm] = useState({ notes: "", userToc: "", userSummary: "" });
+  const sourceDirtyRef = useRef(false);
+  const [savingSource, setSavingSource] = useState(false);
 
-  const load = () =>
+  const load = useCallback(() =>
     fetch(`/api/books/${id}`)
       .then((r) => r.json())
       .then((data) => {
         if (data.book) {
           setBook(data.book);
           setConcepts(data.concepts ?? []);
+          setLatestExtractionRun(data.latestExtractionRun ?? null);
+          if (!sourceDirtyRef.current) {
+            setSourceForm({
+              notes: data.book.notes ?? "",
+              userToc: data.book.userToc ?? "",
+              userSummary: data.book.userSummary ?? "",
+            });
+          }
         }
-      });
+      }), [id]);
 
   useEffect(() => {
     load();
@@ -49,13 +63,49 @@ export default function BookDetailPage() {
       load();
     }, 3000);
     return () => clearInterval(iv);
-  }, [id]);
+  }, [id, load]);
 
   const analyze = async () => {
     const res = await fetch(`/api/analyze/${id}`, { method: "POST" });
     if (res.ok) {
       toast.info("解析を開始しました...");
       load();
+    }
+  };
+
+  const saveSourceFields = async () => {
+    setSavingSource(true);
+    try {
+      await persistSourceFields();
+      toast.success("解析用ソースを保存しました");
+      sourceDirtyRef.current = false;
+      load();
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setSavingSource(false);
+    }
+  };
+
+  const persistSourceFields = async () => {
+    const res = await fetch(`/api/books/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sourceForm),
+    });
+    if (!res.ok) throw new Error(await res.text());
+  };
+
+  const saveSourceFieldsAndAnalyze = async () => {
+    setSavingSource(true);
+    try {
+      await persistSourceFields();
+      sourceDirtyRef.current = false;
+      await analyze();
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setSavingSource(false);
     }
   };
 
@@ -122,20 +172,90 @@ export default function BookDetailPage() {
 
       {isAnalyzeFailed && (
         <Card className="border-red-200 bg-red-50">
-          <CardContent className="py-3 text-sm text-red-700 space-y-1">
+          <CardContent className="py-3 text-sm text-red-700 space-y-2">
             <p className="font-medium">{analysisErrorTitle(book.analyzeError)}</p>
             <p>{analysisErrorMessage(book.analyzeError)}</p>
+            {book.analyzeError === "insufficient_source" && (
+              <p className="text-xs">
+                {formatSourceQualityHint(latestExtractionRun)} → 目次や要約を入力してください
+              </p>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {book.notes && (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">解析用ソース</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1 md:col-span-2">
+              <Label htmlFor="userToc">目次を貼り付け</Label>
+              <Textarea
+                id="userToc"
+                rows={7}
+                value={sourceForm.userToc}
+                onChange={(e) => {
+                  sourceDirtyRef.current = true;
+                  setSourceForm((form) => ({ ...form, userToc: e.target.value }));
+                }}
+                placeholder={"第1章 ...\n第2章 ..."}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="userSummary">自分で書いた要約・読了後感想</Label>
+              <Textarea
+                id="userSummary"
+                rows={6}
+                value={sourceForm.userSummary}
+                onChange={(e) => {
+                  sourceDirtyRef.current = true;
+                  setSourceForm((form) => ({ ...form, userSummary: e.target.value }));
+                }}
+                placeholder="この本の主張、印象に残った内容、重要だと思った概念..."
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="notes">メモ</Label>
+              <Textarea
+                id="notes"
+                rows={6}
+                value={sourceForm.notes}
+                onChange={(e) => {
+                  sourceDirtyRef.current = true;
+                  setSourceForm((form) => ({ ...form, notes: e.target.value }));
+                }}
+                placeholder="引用、気づき、あとで確認したい点..."
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={saveSourceFields} disabled={savingSource}>
+              {savingSource ? "保存中..." : "保存"}
+            </Button>
+            <Button size="sm" onClick={saveSourceFieldsAndAnalyze} disabled={isAnalyzing || savingSource}>
+              <Play className="w-3 h-3 mr-1" /> 保存内容で解析
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {(book.notes || book.userToc || book.userSummary) && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">メモ・要約</CardTitle>
+            <CardTitle className="text-sm">保存済みソース</CardTitle>
           </CardHeader>
-          <CardContent>
-            <p className="text-sm whitespace-pre-wrap">{book.notes}</p>
+          <CardContent className="space-y-3">
+            {book.userToc && (
+              <SourcePreview title="目次" text={book.userToc} />
+            )}
+            {book.userSummary && (
+              <SourcePreview title="要約・感想" text={book.userSummary} />
+            )}
+            {book.notes && (
+              <SourcePreview title="メモ" text={book.notes} />
+            )}
           </CardContent>
         </Card>
       )}
@@ -203,4 +323,32 @@ export default function BookDetailPage() {
       )}
     </div>
   );
+}
+
+function SourcePreview({ title, text }: { title: string; text: string }) {
+  return (
+    <div>
+      <p className="text-xs font-medium text-muted-foreground">{title}</p>
+      <p className="mt-1 text-sm whitespace-pre-wrap">{text}</p>
+    </div>
+  );
+}
+
+function formatSourceQualityHint(run: ExtractionRun | null) {
+  const fallback = "description: 0文字, TOC: 0行, subjects: 0個";
+  if (!run?.sourceStats) return fallback;
+  try {
+    const stats = JSON.parse(run.sourceStats) as {
+      sourceQuality?: {
+        descriptionChars?: number;
+        tocLines?: number;
+        subjectsCount?: number;
+      } | null;
+    };
+    const quality = stats.sourceQuality;
+    if (!quality) return fallback;
+    return `description: ${quality.descriptionChars ?? 0}文字, TOC: ${quality.tocLines ?? 0}行, subjects: ${quality.subjectsCount ?? 0}個`;
+  } catch {
+    return fallback;
+  }
 }

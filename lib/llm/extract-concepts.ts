@@ -13,8 +13,7 @@ import OpenAI from "openai";
 import { chatWithRetry } from "./openai-client";
 
 export type SourceType =
-  | "title"
-  | "subtitle"
+  | "metadata"
   | "user_notes"
   | "google_books_description"
   | "categories"
@@ -118,7 +117,7 @@ function buildConceptTool(targetCount: TargetCount): OpenAI.ChatCompletionTool {
               groundingType: {
                 type: "string",
                 enum: GROUNDING_TYPES,
-                description: "source_explicit, source_implied, known_book, or model_prior",
+                description: "source_explicit, source_supported, metadata_only, or model_prior",
               },
               evidenceText: {
                 type: "string",
@@ -188,16 +187,16 @@ export async function extractConcepts(
         content: `You are a knowledge extraction specialist. Extract the book-specific knowledge structure from the provided source material only.
 
 SOURCE-GROUNDING RULES (highest priority):
-- Every concept must be grounded in the current book's source material (title, subtitle, user_notes, google_books_description, categories, table_of_contents, openbd_description, openbd_table_of_contents, ndl_description, or ndl_subjects).
-- Concepts may be explicitly stated OR strongly implied by the source material. If the source identifies a field or organizing category (e.g. "brain chemicals", "neurotransmitters", "economics", "security controls"), you may decompose it into its core domain sub-concepts when the source strongly supports that field.
+- Every concept must be grounded in the current book source material: descriptions, table of contents, reviews, subjects/categories, user notes, user TOC, or user summary. Title, author, subtitle, publisher, date, ISBN, and page count are search/book-identification metadata, not concept-extraction source.
+- Concepts may be explicitly stated OR strongly supported by the source material. Decomposition is a candidate expansion technique, NOT the primary route. Only use it when source explicitly mentions the umbrella term AND the decomposition is canonical for the field.
 - Do not import concepts from other books, previous analyses, existing map concepts, or unrelated general knowledge.
 - Do not infer concepts from the book's reputation or what it "probably covers" — only from the actual source text provided.
 - For each concept, record groundingType and evidenceText.
 - groundingType:
   - source_explicit: the exact concept name or close equivalent appears in the source
-  - source_implied: strongly implied by a source phrase, heading, subject, or description
-  - known_book: known canonical concept for this exact book; use sparingly until canonical guards are added
-  - model_prior: model's domain prior; use only when needed to preserve the domain structure
+  - source_supported: directly supported by a source phrase, heading, subject, review, user field, or description
+  - metadata_only: based only on title, author, subtitle, publisher, ISBN, or other identification metadata; avoid this except as a weak candidate
+  - model_prior: model domain prior, book reputation, or known-book knowledge; use only for whitelisted canonical books, otherwise it will be rejected
 - specificity is numeric 1-5: 5=book-specific/chapter-level/named term, 3=domain-specific, 1=generic.
 
 VOLUME RULES:
@@ -209,9 +208,9 @@ VOLUME RULES:
 - It is better to return a small grounded candidate pool than a large ungrounded one.
 
 Primary extraction goal:
-- First identify the organizing axis of the book from its title, subtitle, description, categories, and table of contents.
+- First identify the organizing axis of the book from descriptions, categories, table of contents, reviews, and user-provided source fields.
 - Extract chapter-level, repeated, named, specialist, or author-specific concepts explicitly present in the source first.
-- When the source names a broad domain category (e.g. "brain chemicals", "microeconomics", "authentication"), decompose it into the most central sub-concepts of that domain.
+- When the source names a broad domain category (e.g. "brain chemicals", "microeconomics", "authentication"), decompose only when that umbrella term is explicit and the sub-concepts are canonical for the field.
 - Do not fill the output with generic labels (Motivation, Leadership, Risk Management, Mindfulness, Happiness, Decision Making) unless the source explicitly uses them as a central named concept.
 - Use abstract themes only as supporting or context concepts, not as the core of the extraction.
 
@@ -306,21 +305,14 @@ ${candidates.length > 0 ? `1. You have been given ${candidates.length} pre-extra
    - Process EVERY candidate: assign English name, nameJa, description, domain, category, groundingType, evidenceText, importance, specificity, and confidence.
    - Filter out noise (marketing copy, structural labels like "Chapter", metadata like "ISBN", role labels like "著者").
    - Do NOT aggressively deduplicate. This is a raw candidate stage; near-duplicates are acceptable if they have different evidence.
-2. After processing all valid candidates, add additional concepts that are grounded in the source material (descriptions, subtitle, categories) but not already covered by the candidates.
+2. After processing all valid candidates, add additional concepts that are grounded in the source material (descriptions, TOC, reviews, subjects/categories, or user-provided fields) but not already covered by the candidates.
 3. Do NOT add concepts from other books, prior analyses, or unrelated general knowledge.
 4. For each concept, set groundingType and evidenceText.` : `1. Read the source material carefully.
 2. Identify the organizing axis: field, central topic, named theories, chapter structure, key terms.
 3. Extract concepts that are explicitly named in the source first.
-4. When the source strongly identifies a specific domain (e.g. "脳内物質" → neuroscience; "microeconomics" → economics; "zero trust" → cybersecurity), decompose into the central sub-concepts of that domain and mark them domain_specific with the source phrase as evidenceText.
+4. Candidate expansion warning: decomposition is NOT the primary route. Only decompose a broad source term (e.g. "脳内物質", "microeconomics", "zero trust") when the source explicitly mentions that umbrella term AND the decomposition is canonical for the field.
 5. Do not add concepts from other books, prior analyses, or unrelated general knowledge.
 6. For each concept, set groundingType and evidenceText.`}
-
-Example: if subtitle says "脳内物質で仕事の精度と速度を上げる方法":
-- "Brain Chemicals" → book_specific (subtitle names it directly)
-- "Dopamine" → domain_specific, evidenceText="脳内物質で仕事の精度と速度を上げる方法" (neuroscience decomposition)
-- "Serotonin" → domain_specific, same evidenceText
-- "Work Performance" → domain_specific, evidenceText="仕事の精度と速度を上げる"
-NOT allowed: "Zero-Second Thinking", "Mindfulness", "Emotional Intelligence" (not grounded in this source)
 
 Noise to exclude (do NOT create concepts for these):
 - Marketing copy: "ベストセラー", "不朽の名著", "感動の書", "公式本"
@@ -344,24 +336,35 @@ Return ${targetCount.min}-${targetCount.max} candidates if there is enough sourc
   }
 
   const input = JSON.parse(toolCall.function.arguments) as { concepts: LlmExtractedConcept[] };
-  const all = normalizeExtractedConcepts(input.concepts ?? [], notes);
+  const { sourceText, metadataText } = splitSourceAndMetadataText(notes);
+  const all = normalizeExtractedConcepts(input.concepts ?? [], sourceText, metadataText);
   return all;
 }
 
-function normalizeExtractedConcepts(concepts: LlmExtractedConcept[], sourceText: string): ExtractedConcept[] {
-  return concepts.map((concept) => normalizeExtractedConcept(concept, sourceText)).filter((concept) => concept.name.length > 0);
+function normalizeExtractedConcepts(
+  concepts: LlmExtractedConcept[],
+  sourceText: string,
+  metadataText: string
+): ExtractedConcept[] {
+  return concepts
+    .map((concept) => normalizeExtractedConcept(concept, sourceText, metadataText))
+    .filter((concept) => concept.name.length > 0);
 }
 
-function normalizeExtractedConcept(concept: LlmExtractedConcept, sourceText: string): ExtractedConcept {
+function normalizeExtractedConcept(
+  concept: LlmExtractedConcept,
+  sourceText: string,
+  metadataText: string
+): ExtractedConcept {
   const category = EXTRACTION_CATEGORIES.includes(concept.category as ExtractionCategory)
     ? concept.category as ExtractionCategory
     : "context";
   const claimedGroundingType = GROUNDING_TYPES.includes(concept.groundingType as GroundingType)
     ? concept.groundingType as GroundingType
-    : "source_implied";
+    : "model_prior";
   const specificityScore = clampImportance(concept.specificity ?? 3);
   const evidenceText = concept.evidenceText?.trim() ?? "";
-  const groundingType = verifyGroundingType(claimedGroundingType, evidenceText, sourceText);
+  const groundingType = verifyGroundingType(claimedGroundingType, evidenceText, sourceText, metadataText);
 
   return {
     name: concept.name?.trim() ?? "",
@@ -378,14 +381,32 @@ function normalizeExtractedConcept(concept: LlmExtractedConcept, sourceText: str
     conceptLevel: categoryToConceptLevel(category),
     conceptType: categoryToConceptType(category),
     specificity: scoreToSpecificity(specificityScore, groundingType),
-    sourceEvidence: { sourceType: "google_books_description", evidenceText },
+    sourceEvidence: { sourceType: groundingType === "metadata_only" ? "metadata" : "google_books_description", evidenceText },
   };
 }
 
-function verifyGroundingType(groundingType: GroundingType, evidenceText: string, sourceText: string): GroundingType {
+function verifyGroundingType(
+  groundingType: GroundingType,
+  evidenceText: string,
+  sourceText: string,
+  metadataText: string
+): GroundingType {
   if (/^(Title|Author):/i.test(evidenceText.trim())) return "model_prior";
   if (groundingType === "source_explicit" && !sourceIncludesEvidence(sourceText, evidenceText)) return "model_prior";
+  if (groundingType === "metadata_only" && !sourceIncludesEvidence(metadataText, evidenceText)) return "model_prior";
+  if (groundingType === "source_supported" && sourceIncludesEvidence(metadataText, evidenceText) && !sourceIncludesEvidence(sourceText, evidenceText)) {
+    return "metadata_only";
+  }
   return groundingType;
+}
+
+function splitSourceAndMetadataText(text: string): { sourceText: string; metadataText: string } {
+  const metadataMatch = text.match(/\[Book Metadata\]([\s\S]*?)(?=\n\n\[[^\]]+\]|$)/);
+  const metadataText = metadataMatch?.[0] ?? "";
+  return {
+    metadataText,
+    sourceText: metadataText ? text.replace(metadataText, "") : text,
+  };
 }
 
 function sourceIncludesEvidence(sourceText: string, evidenceText: string): boolean {
@@ -429,6 +450,6 @@ function categoryToConceptType(category: ExtractionCategory): ConceptType {
 
 function scoreToSpecificity(score: 1 | 2 | 3 | 4 | 5, groundingType: GroundingType): Specificity {
   if (groundingType === "source_explicit" || score >= 4) return "book_specific";
-  if (score >= 3 || groundingType === "source_implied") return "domain_specific";
+  if (score >= 3 || groundingType === "source_supported") return "domain_specific";
   return "generic";
 }

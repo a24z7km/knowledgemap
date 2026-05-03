@@ -69,8 +69,8 @@ const GENERIC_BLOCKLIST = new Set([
 
 const GROUNDING_WEIGHTS: Record<GroundingType, number> = {
   source_explicit: 1.0,
-  source_implied: 0.7,
-  known_book: 0.5,
+  source_supported: 0.7,
+  metadata_only: 0.4,
   model_prior: 0.2,
 };
 
