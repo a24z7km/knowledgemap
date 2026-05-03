@@ -117,6 +117,7 @@ function MapContent() {
   const [chatLoading, setChatLoading] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const [lang, setLang] = useState<"en" | "ja">("ja");
+  const [hideOrphans, setHideOrphans] = useState(true);
   const [highlightId, setHighlightId] = useState<number | null>(
     highlightParam ? Number(highlightParam) : null
   );
@@ -271,10 +272,22 @@ function MapContent() {
   const bookTitleById = new Map(books.map((book) => [book.id, book.title]));
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
 
+  const connectedNodeIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const e of edges) { ids.add(e.fromConceptId); ids.add(e.toConceptId); }
+    return ids;
+  }, [edges]);
+
+  const orphanCount = useMemo(
+    () => nodes.filter((n) => !connectedNodeIds.has(n.id)).length,
+    [nodes, connectedNodeIds]
+  );
+
   const displayedGraph = useMemo(() => {
+    const filteredNodes = hideOrphans ? nodes.filter((n) => connectedNodeIds.has(n.id)) : nodes;
     switch (viewMode) {
       case "all":
-        return { nodes, edges };
+        return { nodes: filteredNodes, edges };
       case "one_hop":
         return buildNeighborhoodGraph(nodes, edges, centerNodeId, 1);
       case "two_hop":
@@ -552,6 +565,17 @@ function MapContent() {
               EN
             </button>
           </div>
+
+          <Button
+            type="button"
+            size="sm"
+            variant={hideOrphans ? "outline" : "default"}
+            className="h-8 gap-1.5 text-xs"
+            onClick={() => setHideOrphans((v) => !v)}
+            title="エッジのない孤立ノードの表示切替"
+          >
+            {hideOrphans ? `孤立 ${orphanCount}件 非表示` : `孤立 ${orphanCount}件 表示中`}
+          </Button>
 
           <Button
             type="button"
