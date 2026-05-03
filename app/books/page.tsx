@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, Plus, Trash2, Play, Link as LinkIcon, Upload, CheckSquare, Square } from "lucide-react";
 import type { Book, ExtractionRun } from "@/lib/db/schema";
-import { analysisErrorMessage, analysisErrorTitle } from "@/lib/analysis-errors";
+import { analysisErrorTitle } from "@/lib/analysis-errors";
 
 const STATUS_MAP = {
   read: { label: "読了", color: "default" as const },
@@ -456,7 +456,20 @@ export default function BooksPage() {
                 <p className="text-xs text-muted-foreground line-clamp-2">{book.notes}</p>
               )}
 
-              <AnalysisRunSummary run={book.latestExtractionRun ?? null} />
+              <div className="rounded-md bg-muted/50 px-2 py-1.5 text-xs text-muted-foreground space-y-0.5">
+                <StepInfo
+                  label="Step 1"
+                  completedAt={book.step1CompletedAt ?? null}
+                  model={book.step1Model ?? null}
+                />
+                <StepInfo
+                  label="Step 2"
+                  completedAt={book.latestExtractionRun?.completedAt ?? null}
+                  model={book.latestExtractionRun?.model ?? null}
+                  status={book.latestExtractionRun?.status}
+                  error={book.latestExtractionRun?.error}
+                />
+              </div>
 
               <div className="flex items-center justify-between pt-1">
                 <Badge variant={ANALYZE_MAP[book.analyzeStatus].color} className="text-xs">
@@ -498,23 +511,35 @@ export default function BooksPage() {
   );
 }
 
-function AnalysisRunSummary({ run }: { run: ExtractionRun | null }) {
-  if (!run) {
-    return <p className="text-xs text-muted-foreground">解析履歴なし</p>;
-  }
-
-  const analyzedAt = run.completedAt ?? run.createdAt;
+function StepInfo({
+  label,
+  completedAt,
+  model,
+  status,
+  error,
+}: {
+  label: string;
+  completedAt: string | null;
+  model: string | null;
+  status?: ExtractionRun["status"];
+  error?: string | null;
+}) {
   return (
-    <div className="rounded-md bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate">解析モデル: {run.model}</span>
-        <span className="shrink-0">{EXTRACTION_RUN_STATUS_LABELS[run.status]}</span>
-      </div>
-      <p className="mt-0.5">実施日時: {formatAnalysisDate(analyzedAt)}</p>
-      {run.status === "failed" && (
-        <p className="mt-0.5 text-destructive">
-          {analysisErrorTitle(run.error)}: {analysisErrorMessage(run.error)}
-        </p>
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className="font-medium shrink-0">{label}:</span>
+      {completedAt ? (
+        <>
+          <span>{formatAnalysisDate(completedAt)}</span>
+          {model && <span className="text-muted-foreground/70">· {model}</span>}
+          {status && status !== "completed" && (
+            <span className={status === "failed" ? "text-destructive" : ""}>
+              {EXTRACTION_RUN_STATUS_LABELS[status]}
+              {status === "failed" && error && ` (${analysisErrorTitle(error)})`}
+            </span>
+          )}
+        </>
+      ) : (
+        <span className="text-muted-foreground/50">未実行</span>
       )}
     </div>
   );
