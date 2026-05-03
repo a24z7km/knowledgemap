@@ -130,11 +130,12 @@ Return up to ${maxRelations} evidence-backed relationships. Prefer a connected g
     const from = nameMap.get(normalize(r.from));
     const to = nameMap.get(normalize(r.to));
     if (!from || !to || from === to) return [];
+    if (!isRelationType(r.type)) return [];
     const fromConcept = conceptByName.get(from);
     const toConcept = conceptByName.get(to);
     if (!fromConcept || !toConcept) return [];
     const confidence = clampConfidence((r as { confidence?: unknown }).confidence);
-    if (!isValidRelationEvidence(
+    const hasValidEvidence = isValidRelationEvidence(
       r.evidence,
       { name: fromConcept.name, aliases: [fromConcept.nameJa].filter(Boolean) as string[] },
       { name: toConcept.name, aliases: [toConcept.nameJa].filter(Boolean) as string[] },
@@ -146,11 +147,18 @@ Return up to ${maxRelations} evidence-backed relationships. Prefer a connected g
         toConcept.excerpt,
         toConcept.evidenceText,
       ]
-    )) {
-      return [];
-    }
+    );
+    const adjustedConfidence = hasValidEvidence ? confidence : Math.min(0.5, Math.max(0.4, confidence));
 
-    return [{ ...r, from, to, type: isRelationType(r.type) ? r.type : "related", confidence, source: "llm" as const }];
+    return [{
+      ...r,
+      from,
+      to,
+      type: r.type,
+      evidence: r.evidence ?? "",
+      confidence: adjustedConfidence,
+      source: "llm" as const,
+    }];
   });
 
   // Deduplicate
@@ -164,7 +172,42 @@ Return up to ${maxRelations} evidence-backed relationships. Prefer a connected g
 
   if (deduped.length >= minRelations) return deduped;
 
-  return deduped;
+  const rankedConcepts = [...concepts].sort((a, b) => b.importance - a.importance);
+  const fallbackRelations: ExtractedRelation[] = [];
+  const addFallbackRelation = (from: string, to: string, type: RelationType) => {
+    if (from === to) return;
+    const key = `${from}||${to}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    fallbackRelations.push({
+      from,
+      to,
+      type,
+      evidence: "Heuristic fallback relation based on same book context.",
+      confidence: 0.35,
+      source: "fallback",
+    });
+  };
+
+  for (const concept of rankedConcepts) {
+    const sameDomainConcepts = rankedConcepts
+      .filter((candidate) => candidate.name !== concept.name && candidate.domain === concept.domain)
+      .slice(0, 2);
+
+    for (const candidate of sameDomainConcepts) {
+      addFallbackRelation(concept.name, candidate.name, "same_family_as");
+      if (deduped.length + fallbackRelations.length >= minRelations) {
+        return [...deduped, ...fallbackRelations];
+      }
+    }
+  }
+
+  for (let i = 0; i < rankedConcepts.length - 1; i += 1) {
+    addFallbackRelation(rankedConcepts[i].name, rankedConcepts[i + 1].name, "related");
+    if (deduped.length + fallbackRelations.length >= minRelations) break;
+  }
+
+  return [...deduped, ...fallbackRelations];
 }
 
 function clampConfidence(value: unknown): number {

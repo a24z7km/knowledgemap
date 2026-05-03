@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { books, concepts, bookConcepts, conceptRelations } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { extractRelations } from "@/lib/llm/extract-relations";
 import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
 import type { ExtractedConcept } from "@/lib/llm/extract-concepts";
@@ -19,11 +19,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "解析済みの本がありません" }, { status: 422 });
   }
 
-  // 既存のbook-scopedリレーションをすべて削除
-  await db.delete(conceptRelations).where(eq(conceptRelations.source, "llm"));
-
   let totalRelations = 0;
   const results: { bookId: number; title: string; relationCount: number }[] = [];
+  const pendingRelations: Array<typeof conceptRelations.$inferInsert> = [];
 
   for (const book of allBooks) {
     const rows = await db
@@ -79,7 +77,7 @@ export async function POST(req: Request) {
       if (seen.has(key)) continue;
       seen.add(key);
 
-      await db.insert(conceptRelations).values({
+      pendingRelations.push({
         fromConceptId: normalized.fromConceptId,
         toConceptId: normalized.toConceptId,
         relationType: normalized.relationType,
@@ -92,6 +90,31 @@ export async function POST(req: Request) {
 
     totalRelations += seen.size;
     results.push({ bookId: book.id, title: book.title, relationCount: seen.size });
+  }
+
+  const existingGeneratedRelations = await db
+    .select({ id: conceptRelations.id })
+    .from(conceptRelations)
+    .where(inArray(conceptRelations.source, ["llm", "fallback"]));
+  const minimumGeneratedRelations = existingGeneratedRelations.length > 0
+    ? Math.max(1, Math.floor(existingGeneratedRelations.length * 0.5))
+    : 1;
+
+  if (pendingRelations.length < minimumGeneratedRelations) {
+    return NextResponse.json({
+      ok: true,
+      keptExistingRelations: true,
+      totalRelations: pendingRelations.length,
+      existingRelationCount: existingGeneratedRelations.length,
+      minimumGeneratedRelations,
+      bookCount: allBooks.length,
+      results,
+    });
+  }
+
+  await db.delete(conceptRelations).where(inArray(conceptRelations.source, ["llm", "fallback"]));
+  if (pendingRelations.length > 0) {
+    await db.insert(conceptRelations).values(pendingRelations);
   }
 
   return NextResponse.json({ ok: true, totalRelations, bookCount: allBooks.length, results });
