@@ -9,6 +9,9 @@ export function isValidRelationEvidence(
   _target: RelationEvidenceConcept,
   _sourceTexts: Array<string | null | undefined> = []
 ): boolean {
+  void _source;
+  void _target;
+  void _sourceTexts;
   const normalizedEvidence = normalizeEvidenceText(evidence ?? "");
   if (normalizedEvidence.length < 20) return false;
   return true;

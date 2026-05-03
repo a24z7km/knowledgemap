@@ -2,10 +2,14 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { books, concepts, bookConcepts, conceptRelations } from "@/lib/db/schema";
 import { eq, inArray } from "drizzle-orm";
-import { extractRelations } from "@/lib/llm/extract-relations";
+import { parseAliases } from "@/lib/concepts/normalize";
+import {
+  buildHighSimilarityFallbackRelations,
+  extractGlobalRelations,
+  type ExistingRelationNeighborhood,
+  type GlobalRelationConcept,
+} from "@/lib/llm/extract-global-relations";
 import { normalizeConceptRelation, relationIdentityKey } from "@/lib/relations";
-import type { ExtractedConcept } from "@/lib/llm/extract-concepts";
-import type { ConceptDomain } from "@/lib/domains";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
@@ -13,109 +17,189 @@ export async function POST(req: Request) {
 
   const db = getDb();
 
-  // 解析済みの本を全件取得
-  const allBooks = await db.select().from(books).where(eq(books.analyzeStatus, "done"));
-  if (allBooks.length === 0) {
+  const analyzedBooks = await db.select({ id: books.id }).from(books).where(eq(books.analyzeStatus, "done"));
+  const analyzedBookIds = analyzedBooks.map((book) => book.id);
+  if (analyzedBookIds.length === 0) {
     return NextResponse.json({ error: "解析済みの本がありません" }, { status: 422 });
   }
 
-  let totalRelations = 0;
-  const results: { bookId: number; title: string; relationCount: number }[] = [];
-  const pendingRelations: Array<typeof conceptRelations.$inferInsert> = [];
+  const conceptRows = await db
+    .select({
+      id: concepts.id,
+      name: concepts.name,
+      aliases: concepts.aliases,
+      domain: concepts.domain,
+      description: concepts.description,
+      bookId: bookConcepts.bookId,
+      importance: bookConcepts.importance,
+      conceptType: bookConcepts.conceptType,
+      specificity: bookConcepts.specificity,
+    })
+    .from(concepts)
+    .innerJoin(bookConcepts, eq(bookConcepts.conceptId, concepts.id))
+    .where(inArray(bookConcepts.bookId, analyzedBookIds));
 
-  for (const book of allBooks) {
-    const rows = await db
-      .select({
-        id: concepts.id,
-        name: concepts.name,
-        description: concepts.description,
-        domain: concepts.domain,
-        importance: bookConcepts.importance,
-        excerpt: bookConcepts.excerpt,
-        sourceEvidenceText: bookConcepts.sourceEvidenceText,
-      })
-      .from(bookConcepts)
-      .innerJoin(concepts, eq(bookConcepts.conceptId, concepts.id))
-      .where(eq(bookConcepts.bookId, book.id));
-
-    if (rows.length === 0) continue;
-
-    const extracted: ExtractedConcept[] = rows.map((r) => ({
-      name: r.name,
-      nameJa: "",
-      description: r.description ?? "",
-      importance: (Math.min(5, Math.max(1, r.importance)) as 1 | 2 | 3 | 4 | 5),
-      excerpt: r.excerpt ?? "",
-      domain: (r.domain ?? "general") as ConceptDomain,
-      category: "context" as const,
-      groundingType: "source_explicit" as const,
-      specificityScore: 3 as const,
-      evidenceText: "",
-      confidence: 1,
-      conceptLevel: "supporting" as const,
-      conceptType: "theme" as const,
-      specificity: "domain_specific" as const,
-      sourceEvidence: { sourceType: "table_of_contents" as const, evidenceText: r.sourceEvidenceText ?? "" },
-    }));
-
-    const relations = await extractRelations(book.title, extracted, model);
-    const conceptIdByName = new Map(rows.map((r) => [r.name, r.id]));
-
-    const seen = new Set<string>();
-    for (const rel of relations) {
-      const fromId = conceptIdByName.get(rel.from);
-      const toId = conceptIdByName.get(rel.to);
-      if (!fromId || !toId) continue;
-
-      const normalized = normalizeConceptRelation({
-        fromConceptId: fromId,
-        toConceptId: toId,
-        relationType: rel.type,
-        bookId: book.id,
-      });
-      const key = relationIdentityKey(normalized);
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      pendingRelations.push({
-        fromConceptId: normalized.fromConceptId,
-        toConceptId: normalized.toConceptId,
-        relationType: normalized.relationType,
-        evidence: rel.evidence,
-        confidence: rel.confidence,
-        bookId: book.id,
-        source: rel.source ?? "llm",
-      });
-    }
-
-    totalRelations += seen.size;
-    results.push({ bookId: book.id, title: book.title, relationCount: seen.size });
+  const globalConcepts = buildGlobalConcepts(conceptRows);
+  if (globalConcepts.length < 2) {
+    return NextResponse.json({ error: "概念が不足しています" }, { status: 422 });
   }
 
-  const existingGeneratedRelations = await db
-    .select({ id: conceptRelations.id })
-    .from(conceptRelations)
-    .where(inArray(conceptRelations.source, ["llm", "fallback"]));
-  const minimumGeneratedRelations = existingGeneratedRelations.length > 0
-    ? Math.max(1, Math.floor(existingGeneratedRelations.length * 0.5))
-    : 1;
+  const existingRows = await db.select().from(conceptRelations);
+  const existingNeighborhood: ExistingRelationNeighborhood[] = existingRows.map((relation) => ({
+    fromConceptId: relation.fromConceptId,
+    toConceptId: relation.toConceptId,
+  }));
 
-  if (pendingRelations.length < minimumGeneratedRelations) {
-    return NextResponse.json({
-      ok: true,
-      keptExistingRelations: true,
-      totalRelations: pendingRelations.length,
-      existingRelationCount: existingGeneratedRelations.length,
-      minimumGeneratedRelations,
-      bookCount: allBooks.length,
-      results,
+  const llmRelations = await extractGlobalRelations({
+    concepts: globalConcepts,
+    existingRelations: existingNeighborhood,
+    model,
+  });
+
+  const pendingRelations: Array<typeof conceptRelations.$inferInsert> = [];
+  const seen = new Set<string>();
+  for (const relation of llmRelations) {
+    const normalized = normalizeConceptRelation({
+      fromConceptId: relation.fromConceptId,
+      toConceptId: relation.toConceptId,
+      relationType: relation.relationType,
+      bookId: null,
+    });
+    const key = relationIdentityKey(normalized);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pendingRelations.push({
+      fromConceptId: normalized.fromConceptId,
+      toConceptId: normalized.toConceptId,
+      relationType: normalized.relationType,
+      evidence: relation.evidence,
+      confidence: relation.confidence ?? 0.5,
+      bookId: null,
+      source: "llm",
     });
   }
 
-  await db.delete(conceptRelations).where(inArray(conceptRelations.source, ["llm", "fallback"]));
+  const fallbackRelations = buildHighSimilarityFallbackRelations({
+    concepts: globalConcepts,
+    existingRelations: pendingRelations.map((relation) => ({
+      fromConceptId: relation.fromConceptId,
+      toConceptId: relation.toConceptId,
+    })),
+  });
+
+  for (const relation of fallbackRelations) {
+    const normalized = normalizeConceptRelation({
+      fromConceptId: relation.fromConceptId,
+      toConceptId: relation.toConceptId,
+      relationType: relation.relationType,
+      bookId: null,
+    });
+    const key = relationIdentityKey(normalized);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    pendingRelations.push({
+      fromConceptId: normalized.fromConceptId,
+      toConceptId: normalized.toConceptId,
+      relationType: normalized.relationType,
+      evidence: relation.evidence,
+      confidence: 0.35,
+      bookId: null,
+      source: "fallback",
+    });
+  }
+
+  const minimumReplacementRelations = Math.ceil(globalConcepts.length * 1.2);
+  if (pendingRelations.length < minimumReplacementRelations) {
+    return NextResponse.json({
+      ok: true,
+      keptExistingRelations: true,
+      reason: "generated_relation_count_below_global_minimum",
+      conceptCount: globalConcepts.length,
+      generatedRelationCount: pendingRelations.length,
+      minimumReplacementRelations,
+      llmRelationCount: llmRelations.length,
+      fallbackRelationCount: fallbackRelations.length,
+    });
+  }
+
+  await db
+    .delete(conceptRelations)
+    .where(inArray(conceptRelations.source, ["llm", "fallback"]));
   if (pendingRelations.length > 0) {
     await db.insert(conceptRelations).values(pendingRelations);
   }
 
-  return NextResponse.json({ ok: true, totalRelations, bookCount: allBooks.length, results });
+  return NextResponse.json({
+    ok: true,
+    conceptCount: globalConcepts.length,
+    totalRelations: pendingRelations.length,
+    llmRelationCount: pendingRelations.filter((relation) => relation.source === "llm").length,
+    fallbackRelationCount: pendingRelations.filter((relation) => relation.source === "fallback").length,
+    targetRange: {
+      min: Math.ceil(globalConcepts.length * 1.2),
+      target: Math.ceil(globalConcepts.length * 1.45),
+    },
+  });
+}
+
+function buildGlobalConcepts(rows: Array<{
+  id: number;
+  name: string;
+  aliases: string;
+  domain: string;
+  description: string | null;
+  bookId: number;
+  importance: number;
+  conceptType: string;
+  specificity: string;
+}>): GlobalRelationConcept[] {
+  const byConceptId = new Map<number, {
+    id: number;
+    name: string;
+    aliases: string[];
+    domain: string;
+    description: string | null;
+    bookIds: Set<number>;
+    importanceTotal: number;
+    importanceCount: number;
+    conceptTypes: Set<string>;
+    specificities: Set<string>;
+  }>();
+
+  for (const row of rows) {
+    let concept = byConceptId.get(row.id);
+    if (!concept) {
+      concept = {
+        id: row.id,
+        name: row.name,
+        aliases: parseAliases(row.aliases),
+        domain: row.domain,
+        description: row.description,
+        bookIds: new Set<number>(),
+        importanceTotal: 0,
+        importanceCount: 0,
+        conceptTypes: new Set<string>(),
+        specificities: new Set<string>(),
+      };
+      byConceptId.set(row.id, concept);
+    }
+    concept.bookIds.add(row.bookId);
+    concept.importanceTotal += row.importance;
+    concept.importanceCount += 1;
+    if (row.conceptType) concept.conceptTypes.add(row.conceptType);
+    if (row.specificity) concept.specificities.add(row.specificity);
+  }
+
+  return [...byConceptId.values()].map((concept) => ({
+    id: concept.id,
+    name: concept.name,
+    aliases: concept.aliases,
+    domain: concept.domain,
+    description: concept.description,
+    bookCount: concept.bookIds.size,
+    bookIds: [...concept.bookIds],
+    averageImportance: concept.importanceCount > 0 ? concept.importanceTotal / concept.importanceCount : 0,
+    conceptTypes: [...concept.conceptTypes],
+    specificities: [...concept.specificities],
+  }));
 }
