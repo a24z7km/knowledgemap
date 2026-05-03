@@ -168,6 +168,15 @@ function conceptStatusSqlList() {
   return CONCEPT_STATUSES.map((status) => `'${status}'`).join(",");
 }
 
+function withForeignKeysDisabled(sqlite: Database.Database, migrate: () => void) {
+  sqlite.pragma("foreign_keys = OFF");
+  try {
+    migrate();
+  } finally {
+    sqlite.pragma("foreign_keys = ON");
+  }
+}
+
 function ensureBookUserSourceColumns(sqlite: Database.Database) {
   const columns = sqlite.prepare("PRAGMA table_info(books)").all() as { name: string }[];
   const columnNames = new Set(columns.map((column) => column.name));
@@ -202,7 +211,6 @@ function ensureGroundingTypeConstraints(sqlite: Database.Database) {
 
   if (!conceptNeedsMigration && !rawConceptNeedsMigration) return;
 
-  sqlite.exec("PRAGMA foreign_keys = OFF");
   const migrateGroundingTypes = sqlite.transaction(() => {
     if (conceptNeedsMigration) {
       sqlite.exec(`
@@ -293,11 +301,7 @@ function ensureGroundingTypeConstraints(sqlite: Database.Database) {
     }
   });
 
-  try {
-    migrateGroundingTypes();
-  } finally {
-    sqlite.exec("PRAGMA foreign_keys = ON");
-  }
+  withForeignKeysDisabled(sqlite, migrateGroundingTypes);
 }
 
 function ensureConceptScoringColumns(sqlite: Database.Database) {
@@ -381,7 +385,6 @@ function ensureAnalyzeStatusConstraint(sqlite: Database.Database) {
 
   if (table?.sql?.includes("'failed'")) return;
 
-  sqlite.exec("PRAGMA foreign_keys = OFF");
   const migrateAnalyzeStatuses = sqlite.transaction(() => {
     sqlite.exec(`
       CREATE TABLE books_new (
@@ -430,11 +433,7 @@ function ensureAnalyzeStatusConstraint(sqlite: Database.Database) {
     `);
   });
 
-  try {
-    migrateAnalyzeStatuses();
-  } finally {
-    sqlite.exec("PRAGMA foreign_keys = ON");
-  }
+  withForeignKeysDisabled(sqlite, migrateAnalyzeStatuses);
 }
 
 function ensureRelationTypeConstraint(sqlite: Database.Database) {
@@ -444,7 +443,6 @@ function ensureRelationTypeConstraint(sqlite: Database.Database) {
 
   if (table?.sql?.includes("same_family_as") && table.sql.includes("confidence") && table.sql.includes("'fallback'")) return;
 
-  sqlite.exec("PRAGMA foreign_keys = OFF");
   const migrateRelationTypes = sqlite.transaction(() => {
     sqlite.exec(`
       CREATE TABLE concept_relations_new (
@@ -494,11 +492,7 @@ function ensureRelationTypeConstraint(sqlite: Database.Database) {
     `);
   });
 
-  try {
-    migrateRelationTypes();
-  } finally {
-    sqlite.exec("PRAGMA foreign_keys = ON");
-  }
+  withForeignKeysDisabled(sqlite, migrateRelationTypes);
 }
 
 function ensureConceptRelationColumns(sqlite: Database.Database) {
