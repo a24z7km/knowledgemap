@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { BookOpen, ChevronDown, ExternalLink, MousePointer2, SendHorizontal, Sparkles, X } from "lucide-react";
+import { BookOpen, ChevronDown, ExternalLink, MousePointer2, RefreshCw, SendHorizontal, Sparkles, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -108,6 +108,8 @@ function MapContent() {
   const [selectedError, setSelectedError] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<number[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
+  const [remapModel, setRemapModel] = useState("gpt-4o-mini");
+  const [remapping, setRemapping] = useState(false);
   const [insightModel, setInsightModel] = useState("gpt-4o-mini");
   const [insight, setInsight] = useState<MapInsight | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
@@ -117,11 +119,29 @@ function MapContent() {
   const [chatLoading, setChatLoading] = useState(false);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const [lang, setLang] = useState<"en" | "ja">("ja");
-  const [hideOrphans, setHideOrphans] = useState(true);
   const [highlightId, setHighlightId] = useState<number | null>(
     highlightParam ? Number(highlightParam) : null
   );
   const pendingNodeIdRef = useRef<number | null>(null);
+
+  const runGlobalRemap = async () => {
+    setRemapping(true);
+    try {
+      const res = await fetch("/api/remap-global", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: remapModel }),
+      });
+      const data = await res.json() as { totalRelations?: number; bookCount?: number; error?: string };
+      if (!res.ok) { toast.error(data.error ?? "リマップに失敗しました"); return; }
+      toast.success(`全体リマップ完了: ${data.bookCount}冊 / 関係 ${data.totalRelations}件`);
+      loadGraph();
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setRemapping(false);
+    }
+  };
 
   const loadGraph = useCallback(() => {
     const params = new URLSearchParams();
@@ -284,10 +304,9 @@ function MapContent() {
   );
 
   const displayedGraph = useMemo(() => {
-    const filteredNodes = hideOrphans ? nodes.filter((n) => connectedNodeIds.has(n.id)) : nodes;
     switch (viewMode) {
       case "all":
-        return { nodes: filteredNodes, edges };
+        return { nodes, edges };
       case "one_hop":
         return buildNeighborhoodGraph(nodes, edges, centerNodeId, 1);
       case "two_hop":
@@ -573,23 +592,35 @@ function MapContent() {
           <Button
             type="button"
             size="sm"
-            variant={hideOrphans ? "outline" : "default"}
-            className="h-8 gap-1.5 text-xs"
-            onClick={() => setHideOrphans((v) => !v)}
-            title="エッジのない孤立ノードの表示切替"
-          >
-            {hideOrphans ? `孤立 ${orphanCount}件 非表示` : `孤立 ${orphanCount}件 表示中`}
-          </Button>
-
-          <Button
-            type="button"
-            size="sm"
             variant={selectionMode ? "default" : "outline"}
             className="h-8 gap-1.5 text-xs"
             onClick={() => setSelectionMode((enabled) => !enabled)}
           >
             <MousePointer2 className="h-3.5 w-3.5" />
             選択
+          </Button>
+
+          <Select value={remapModel} onValueChange={(v) => setRemapModel(v ?? "gpt-4o-mini")}>
+            <SelectTrigger className="h-8 w-36 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="gpt-4o-mini">gpt-4o-mini</SelectItem>
+              <SelectItem value="gpt-4.1-mini">gpt-4.1-mini</SelectItem>
+              <SelectItem value="gpt-4.1">gpt-4.1</SelectItem>
+              <SelectItem value="gpt-4o">gpt-4o</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 gap-1.5 text-xs"
+            disabled={remapping}
+            onClick={runGlobalRemap}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${remapping ? "animate-spin" : ""}`} />
+            {remapping ? "リマップ中..." : "全体リマップ"}
           </Button>
 
           {selectedBooks.length > 0 && (
