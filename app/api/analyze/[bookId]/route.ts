@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { books, concepts, bookConcepts, conceptRelations } from "@/lib/db/schema";
+import { books, concepts, bookConcepts, conceptRelations, extractionRuns } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { extractConcepts } from "@/lib/llm/extract-concepts";
 import { extractRelations } from "@/lib/llm/extract-relations";
@@ -37,7 +37,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ bookId:
 
 async function runAnalysis(bookId: number, title: string, author: string, notes: string, model = "gpt-4o-mini") {
   const db = getDb();
+  let extractionRunId: number | null = null;
+  let tocCount = 0;
+  let rawCount = 0;
+  let clusteredCount = 0;
+  let promotedCount = 0;
+  let droppedReasons: string[] = [];
+
   try {
+    const [run] = await db
+      .insert(extractionRuns)
+      .values({
+        bookId,
+        model,
+        status: "running",
+        sourceStats: JSON.stringify(buildSourceStats({ tocCount, rawCount, clusteredCount, promotedCount, droppedReasons })),
+      })
+      .returning({ id: extractionRuns.id });
+    extractionRunId = run.id;
+
     // Step 1: Clean up previous analysis data for this book
     const prevLinks = await db.select({ conceptId: bookConcepts.conceptId }).from(bookConcepts).where(eq(bookConcepts.bookId, bookId));
     const prevConceptIds = prevLinks.map((l) => l.conceptId);
@@ -55,7 +73,11 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
       }
     }
 
-    if (isCancellationRequested(bookId)) { clearCancellation(bookId); return; }
+    if (isCancellationRequested(bookId)) {
+      await finishExtractionRun(extractionRunId, "cancelled", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
+      clearCancellation(bookId);
+      return;
+    }
 
     // Step 2: Build structured extraction context (current book only — no existing concepts).
     const bookMetadata = await fetchBookMetadata(title, author);
@@ -65,20 +87,41 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     const allToc = bookMetadata.sources.flatMap((s) => s.tableOfContents);
     const allSubjects = bookMetadata.sources.flatMap((s) => s.subjects);
     const candidates = generateConceptCandidates({ toc: allToc, subjects: allSubjects, userNotes: notes });
-    const tocCount = tocLineCount(allToc);
+    tocCount = tocLineCount(allToc);
+    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
 
-    if (isCancellationRequested(bookId)) { clearCancellation(bookId); return; }
+    if (isCancellationRequested(bookId)) {
+      await finishExtractionRun(extractionRunId, "cancelled", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
+      clearCancellation(bookId);
+      return;
+    }
 
     // Step 4: Extract concepts (LLM enriches candidates rather than extracting freely)
     const extracted = await extractConcepts(title, author, enrichedNotes, model, candidates);
+    rawCount = extracted.length;
+    clusteredCount = new Set(extracted.map((concept) => concept.name.trim().toLowerCase()).filter(Boolean)).size;
+    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
 
     // Step 5: Quality check
     const qualityWarnings = checkConceptQuality(extracted, tocCount);
+    droppedReasons = qualityWarnings.warnings;
     if (qualityWarnings.status === "failed") {
+      await finishExtractionRun(extractionRunId, "failed", {
+        tocCount,
+        rawCount,
+        clusteredCount,
+        promotedCount,
+        droppedReasons,
+      }, `Concept extraction quality check failed: ${qualityWarnings.warnings.join("; ")}`);
       throw new Error(`Concept extraction quality check failed: ${qualityWarnings.warnings.join("; ")}`);
     }
+    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
 
-    if (isCancellationRequested(bookId)) { clearCancellation(bookId); return; }
+    if (isCancellationRequested(bookId)) {
+      await finishExtractionRun(extractionRunId, "cancelled", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
+      clearCancellation(bookId);
+      return;
+    }
 
     // Step 6: Normalize + upsert concepts
     const existingConcepts = await db.select().from(concepts);
@@ -158,10 +201,16 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
           sourceEvidenceType: ec.sourceEvidence?.sourceType ?? null,
           sourceEvidenceText: ec.sourceEvidence?.evidenceText ?? null,
         });
+        promotedCount += 1;
       }
     }
+    await updateExtractionRunStats(extractionRunId, { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
 
-    if (isCancellationRequested(bookId)) { clearCancellation(bookId); return; }
+    if (isCancellationRequested(bookId)) {
+      await finishExtractionRun(extractionRunId, "cancelled", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
+      clearCancellation(bookId);
+      return;
+    }
 
     // Step 7: Extract relations inside this book
     await db.delete(conceptRelations).where(eq(conceptRelations.bookId, bookId));
@@ -193,7 +242,11 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
       });
     }
 
-    if (isCancellationRequested(bookId)) { clearCancellation(bookId); return; }
+    if (isCancellationRequested(bookId)) {
+      await finishExtractionRun(extractionRunId, "cancelled", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
+      clearCancellation(bookId);
+      return;
+    }
 
     // Step 8: Extract high-confidence cross-book relations.
     const crossBookContext = await buildCrossBookRelationContext(bookId, title, author, extracted, conceptIds);
@@ -207,12 +260,79 @@ async function runAnalysis(bookId: number, title: string, author: string, notes:
     await saveCrossBookRelations(crossBookRelations, crossBookContext);
 
     await db.update(books).set({ analyzeStatus: "done" }).where(eq(books.id, bookId));
+    await finishExtractionRun(extractionRunId, "completed", { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons });
   } catch (err) {
+    await finishExtractionRun(
+      extractionRunId,
+      "failed",
+      { tocCount, rawCount, clusteredCount, promotedCount, droppedReasons },
+      String(err)
+    );
     await db
       .update(books)
       .set({ analyzeStatus: "failed", analyzeError: String(err) })
       .where(eq(books.id, bookId));
   }
+}
+
+interface ExtractionSourceStats {
+  tocCount: number;
+  rawCount: number;
+  clusteredCount: number;
+  promotedCount: number;
+  droppedReasons: string[];
+}
+
+function buildSourceStats(stats: ExtractionSourceStats) {
+  return {
+    tocCount: stats.tocCount,
+    rawCount: stats.rawCount,
+    clusteredCount: stats.clusteredCount,
+    promotedCount: stats.promotedCount,
+    droppedReasons: stats.droppedReasons,
+  };
+}
+
+async function updateExtractionRunStats(runId: number | null, stats: ExtractionSourceStats) {
+  if (runId == null) return;
+
+  const db = getDb();
+  await db
+    .update(extractionRuns)
+    .set({
+      tocCount: stats.tocCount,
+      rawCount: stats.rawCount,
+      clusteredCount: stats.clusteredCount,
+      promotedCount: stats.promotedCount,
+      droppedReasons: JSON.stringify(stats.droppedReasons),
+      sourceStats: JSON.stringify(buildSourceStats(stats)),
+    })
+    .where(eq(extractionRuns.id, runId));
+}
+
+async function finishExtractionRun(
+  runId: number | null,
+  status: "completed" | "failed" | "cancelled",
+  stats: ExtractionSourceStats,
+  error?: string
+) {
+  if (runId == null) return;
+
+  const db = getDb();
+  await db
+    .update(extractionRuns)
+    .set({
+      status,
+      tocCount: stats.tocCount,
+      rawCount: stats.rawCount,
+      clusteredCount: stats.clusteredCount,
+      promotedCount: stats.promotedCount,
+      droppedReasons: JSON.stringify(stats.droppedReasons),
+      sourceStats: JSON.stringify(buildSourceStats(stats)),
+      error: error ?? null,
+      completedAt: new Date().toISOString(),
+    })
+    .where(eq(extractionRuns.id, runId));
 }
 
 function buildExtractionSource({

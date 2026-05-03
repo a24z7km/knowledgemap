@@ -66,6 +66,22 @@ function getDb() {
       evidence TEXT,
       book_id INTEGER REFERENCES books(id) ON DELETE SET NULL
     );
+
+    CREATE TABLE IF NOT EXISTS extraction_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      model TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running' CHECK(status IN ('running','completed','failed','cancelled')),
+      toc_count INTEGER NOT NULL DEFAULT 0,
+      raw_count INTEGER NOT NULL DEFAULT 0,
+      clustered_count INTEGER NOT NULL DEFAULT 0,
+      promoted_count INTEGER NOT NULL DEFAULT 0,
+      dropped_reasons TEXT NOT NULL DEFAULT '[]',
+      source_stats TEXT NOT NULL DEFAULT '{}',
+      error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      completed_at TEXT
+    );
   `);
 
   ensureRelationTypeConstraint(sqlite);
@@ -74,6 +90,7 @@ function getDb() {
   ensureBookConceptSourceEvidenceColumns(sqlite);
   normalizeExistingConceptRelations(sqlite);
   ensureConceptRelationUniqueIndexes(sqlite);
+  ensureExtractionRunIndexes(sqlite);
 
   return _db;
 }
@@ -300,6 +317,13 @@ function ensureConceptRelationUniqueIndexes(sqlite: Database.Database) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_concept_relations_unique_cross_book
     ON concept_relations (from_concept_id, to_concept_id, relation_type)
     WHERE book_id IS NULL;
+  `);
+}
+
+function ensureExtractionRunIndexes(sqlite: Database.Database) {
+  sqlite.exec(`
+    CREATE INDEX IF NOT EXISTS idx_extraction_runs_book_created
+    ON extraction_runs (book_id, created_at DESC);
   `);
 }
 

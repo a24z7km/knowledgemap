@@ -36,6 +36,22 @@ export const bookConcepts = sqliteTable("book_concepts", {
   sourceEvidenceText: text("source_evidence_text"),
 });
 
+export const extractionRuns = sqliteTable("extraction_runs", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  bookId: integer("book_id").notNull().references(() => books.id, { onDelete: "cascade" }),
+  model: text("model").notNull(),
+  status: text("status", { enum: ["running", "completed", "failed", "cancelled"] }).notNull().default("running"),
+  tocCount: integer("toc_count").notNull().default(0),
+  rawCount: integer("raw_count").notNull().default(0),
+  clusteredCount: integer("clustered_count").notNull().default(0),
+  promotedCount: integer("promoted_count").notNull().default(0),
+  droppedReasons: text("dropped_reasons").notNull().default("[]"),
+  sourceStats: text("source_stats").notNull().default("{}"),
+  error: text("error"),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+  completedAt: text("completed_at"),
+});
+
 export const conceptRelations = sqliteTable("concept_relations", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   fromConceptId: integer("from_concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
@@ -54,4 +70,5 @@ export type NewBook = typeof books.$inferInsert;
 export type Concept = typeof concepts.$inferSelect;
 export type NewConcept = typeof concepts.$inferInsert;
 export type BookConcept = typeof bookConcepts.$inferSelect;
+export type ExtractionRun = typeof extractionRuns.$inferSelect;
 export type ConceptRelation = typeof conceptRelations.$inferSelect;
