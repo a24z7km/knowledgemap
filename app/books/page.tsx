@@ -18,7 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, Plus, Trash2, Play, Link as LinkIcon, Upload, CheckSquare, Square } from "lucide-react";
-import type { Book } from "@/lib/db/schema";
+import type { Book, ExtractionRun } from "@/lib/db/schema";
 
 const STATUS_MAP = {
   read: { label: "読了", color: "default" as const },
@@ -34,12 +34,23 @@ const ANALYZE_MAP = {
   failed: { label: "エラー", color: "destructive" as const },
 };
 
+const EXTRACTION_RUN_STATUS_LABELS: Record<ExtractionRun["status"], string> = {
+  running: "実行中",
+  completed: "完了",
+  failed: "失敗",
+  cancelled: "中止",
+};
+
 type Tab = "manual" | "url" | "csv";
 
 const EMPTY_FORM = { title: "", author: "", readStatus: "read", notes: "" };
 
+interface BookListItem extends Book {
+  latestExtractionRun?: ExtractionRun | null;
+}
+
 export default function BooksPage() {
-  const [books, setBooks] = useState<Book[]>([]);
+  const [books, setBooks] = useState<BookListItem[]>([]);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("manual");
   const [form, setForm] = useState(EMPTY_FORM);
@@ -65,7 +76,11 @@ export default function BooksPage() {
   const toggleSelect = (id: number) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
 
@@ -235,7 +250,7 @@ export default function BooksPage() {
   };
 
   // ── Analyze / Delete ───────────────────────────────────────────
-  const analyze = async (book: Book) => {
+  const analyze = async (book: BookListItem) => {
     const res = await fetch(`/api/analyze/${book.id}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -247,7 +262,7 @@ export default function BooksPage() {
     }
   };
 
-  const remove = async (book: Book) => {
+  const remove = async (book: BookListItem) => {
     if (!confirm(`「${book.title}」を削除しますか?`)) return;
     await fetch(`/api/books/${book.id}`, { method: "DELETE" });
     toast.success("削除しました");
@@ -440,6 +455,8 @@ export default function BooksPage() {
                 <p className="text-xs text-muted-foreground line-clamp-2">{book.notes}</p>
               )}
 
+              <AnalysisRunSummary run={book.latestExtractionRun ?? null} />
+
               <div className="flex items-center justify-between pt-1">
                 <Badge variant={ANALYZE_MAP[book.analyzeStatus].color} className="text-xs">
                   {ANALYZE_MAP[book.analyzeStatus].label}
@@ -451,12 +468,23 @@ export default function BooksPage() {
                       size="icon"
                       className="h-7 w-7"
                       title={book.analyzeStatus === "done" ? "再解析" : "解析"}
-                      onClick={() => analyze(book)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        analyze(book);
+                      }}
                     >
                       <Play className="w-3 h-3" />
                     </Button>
                   )}
-                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => remove(book)}>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-destructive"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      remove(book);
+                    }}
+                  >
                     <Trash2 className="w-3 h-3" />
                   </Button>
                 </div>
@@ -467,6 +495,36 @@ export default function BooksPage() {
       </div>
     </div>
   );
+}
+
+function AnalysisRunSummary({ run }: { run: ExtractionRun | null }) {
+  if (!run) {
+    return <p className="text-xs text-muted-foreground">解析履歴なし</p>;
+  }
+
+  const analyzedAt = run.completedAt ?? run.createdAt;
+  return (
+    <div className="rounded-md bg-muted/50 px-2 py-1 text-xs text-muted-foreground">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate">解析モデル: {run.model}</span>
+        <span className="shrink-0">{EXTRACTION_RUN_STATUS_LABELS[run.status]}</span>
+      </div>
+      <p className="mt-0.5">実施日時: {formatAnalysisDate(analyzedAt)}</p>
+    </div>
+  );
+}
+
+function formatAnalysisDate(value: string | null) {
+  if (!value) return "不明";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 // ── Shared form fields ─────────────────────────────────────────────

@@ -1,13 +1,28 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { books } from "@/lib/db/schema";
+import { books, extractionRuns } from "@/lib/db/schema";
 import { desc } from "drizzle-orm";
 
 export async function GET() {
   try {
     const db = getDb();
-    const rows = await db.select().from(books).orderBy(desc(books.createdAt));
-    return NextResponse.json(rows);
+    const [bookRows, runRows] = await Promise.all([
+      db.select().from(books).orderBy(desc(books.createdAt)),
+      db.select().from(extractionRuns).orderBy(desc(extractionRuns.createdAt)),
+    ]);
+    const latestRunByBookId = new Map<number, typeof runRows[number]>();
+    for (const run of runRows) {
+      if (!latestRunByBookId.has(run.bookId)) {
+        latestRunByBookId.set(run.bookId, run);
+      }
+    }
+
+    return NextResponse.json(
+      bookRows.map((book) => ({
+        ...book,
+        latestExtractionRun: latestRunByBookId.get(book.id) ?? null,
+      }))
+    );
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
