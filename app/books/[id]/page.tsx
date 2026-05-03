@@ -149,6 +149,7 @@ export default function BookDetailPage() {
   const [step1Model, setStep1Model] = useState("gpt-4o-mini");
   const [step2Model, setStep2Model] = useState("gpt-4o-mini");
   const [step1Running, setStep1Running] = useState(false);
+  const [remapping, setRemapping] = useState(false);
 
   const [sourceForm, setSourceForm] = useState({
     notes: "", userToc: "", userSummary: "", userKeywords: "", userQuotes: "",
@@ -262,6 +263,29 @@ export default function BookDetailPage() {
       setConcepts((prev) => prev.filter((c) => c.id !== bookConceptId));
     } else {
       toast.error("削除に失敗しました");
+    }
+  };
+
+  /* ── remap ── */
+  const runRemap = async () => {
+    setRemapping(true);
+    try {
+      const res = await fetch(`/api/books/${id}/remap`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: step2Model }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        toast.error(body.error ?? "マッピング更新に失敗しました");
+        return;
+      }
+      const data = await res.json() as { relationCount: number };
+      toast.success(`マッピングを更新しました（${data.relationCount} 件の関係）`);
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setRemapping(false);
     }
   };
 
@@ -545,9 +569,21 @@ export default function BookDetailPage() {
 
             <div className="flex flex-wrap items-center gap-2">
               <ModelSelect value={step2Model} onChange={setStep2Model} />
+              {book.analyzeStatus === "done" && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={isAnalyzing || remapping}
+                  onClick={runRemap}
+                >
+                  {remapping
+                    ? <><RefreshCw className="w-3 h-3 mr-1 animate-spin" />更新中...</>
+                    : <><RefreshCw className="w-3 h-3 mr-1" />マッピングのみ更新</>}
+                </Button>
+              )}
               <Button
                 size="sm"
-                disabled={isAnalyzing || !step1Done}
+                disabled={isAnalyzing || remapping || !step1Done}
                 onClick={runStep2}
               >
                 {isAnalyzing
