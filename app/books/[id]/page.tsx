@@ -10,8 +10,9 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Play, Trash2, Brain, Square } from "lucide-react";
-import type { Book, ExtractionRun } from "@/lib/db/schema";
+import { Input } from "@/components/ui/input";
+import { ArrowLeft, Play, Trash2, Brain, Square, RefreshCw, X, Plus, Globe, BookOpen, User } from "lucide-react";
+import type { Book, ExtractionRun, BookKeywordDraft } from "@/lib/db/schema";
 import { domainBadgeClass } from "@/lib/domains";
 import { conceptMetadataLabels } from "@/lib/concept-metadata";
 import { analysisErrorMessage, analysisErrorTitle } from "@/lib/analysis-errors";
@@ -29,15 +30,47 @@ interface ConceptRow {
   specificity?: string | null;
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  web_search: "Web検索",
+  book_db: "書誌DB",
+  user_toc: "ユーザー入力(目次)",
+  user_summary: "ユーザー入力(要約)",
+  user_input: "ユーザー入力",
+};
+
+const SOURCE_ICONS: Record<string, React.ReactNode> = {
+  web_search: <Globe className="w-3 h-3" />,
+  book_db: <BookOpen className="w-3 h-3" />,
+  user_toc: <User className="w-3 h-3" />,
+  user_summary: <User className="w-3 h-3" />,
+  user_input: <User className="w-3 h-3" />,
+};
+
 export default function BookDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const [book, setBook] = useState<Book | null>(null);
   const [concepts, setConcepts] = useState<ConceptRow[]>([]);
   const [latestExtractionRun, setLatestExtractionRun] = useState<ExtractionRun | null>(null);
-  const [sourceForm, setSourceForm] = useState({ notes: "", userToc: "", userSummary: "" });
+  const [drafts, setDrafts] = useState<BookKeywordDraft[]>([]);
+  const [step1Running, setStep1Running] = useState(false);
+
+  const [sourceForm, setSourceForm] = useState({
+    notes: "",
+    userToc: "",
+    userSummary: "",
+    userKeywords: "",
+    userQuotes: "",
+  });
   const sourceDirtyRef = useRef(false);
   const [savingSource, setSavingSource] = useState(false);
+  const [newDraftText, setNewDraftText] = useState("");
+  const [addingDraft, setAddingDraft] = useState(false);
+
+  const loadDrafts = useCallback(async () => {
+    const res = await fetch(`/api/books/${id}/drafts`);
+    if (res.ok) setDrafts(await res.json());
+  }, [id]);
 
   const load = useCallback(() =>
     fetch(`/api/books/${id}`)
@@ -52,6 +85,8 @@ export default function BookDetailPage() {
               notes: data.book.notes ?? "",
               userToc: data.book.userToc ?? "",
               userSummary: data.book.userSummary ?? "",
+              userKeywords: data.book.userKeywords ?? "",
+              userQuotes: data.book.userQuotes ?? "",
             });
           }
         }
@@ -59,11 +94,36 @@ export default function BookDetailPage() {
 
   useEffect(() => {
     load();
+    loadDrafts();
     const iv = setInterval(() => {
       load();
     }, 3000);
     return () => clearInterval(iv);
-  }, [id, load]);
+  }, [id, load, loadDrafts]);
+
+  const runStep1 = async (clear = false) => {
+    setStep1Running(true);
+    try {
+      // Save user fields first
+      await persistSourceFields();
+      sourceDirtyRef.current = false;
+
+      const res = await fetch(`/api/books/${id}/step1`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clear }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      toast.success(`Step 1 完了: ${data.count} 件のキーワードを収集しました`);
+      await load();
+      await loadDrafts();
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setStep1Running(false);
+    }
+  };
 
   const analyze = async () => {
     const res = await fetch(`/api/analyze/${id}`, { method: "POST" });
@@ -77,7 +137,7 @@ export default function BookDetailPage() {
     setSavingSource(true);
     try {
       await persistSourceFields();
-      toast.success("解析用ソースを保存しました");
+      toast.success("保存しました");
       sourceDirtyRef.current = false;
       load();
     } catch (err) {
@@ -96,24 +156,41 @@ export default function BookDetailPage() {
     if (!res.ok) throw new Error(await res.text());
   };
 
-  const saveSourceFieldsAndAnalyze = async () => {
-    setSavingSource(true);
-    try {
-      await persistSourceFields();
-      sourceDirtyRef.current = false;
-      await analyze();
-    } catch (err) {
-      toast.error(String(err));
-    } finally {
-      setSavingSource(false);
-    }
-  };
-
   const cancelAnalysis = async () => {
     const res = await fetch(`/api/analyze/${id}/cancel`, { method: "POST" });
     if (res.ok) {
       toast.info("解析を停止しました");
       load();
+    }
+  };
+
+  const deleteDraft = async (draftId: number) => {
+    const res = await fetch(`/api/books/${id}/drafts`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ draftId }),
+    });
+    if (res.ok) setDrafts((prev) => prev.filter((d) => d.id !== draftId));
+    else toast.error("削除に失敗しました");
+  };
+
+  const addDraft = async () => {
+    if (!newDraftText.trim()) return;
+    setAddingDraft(true);
+    try {
+      const res = await fetch(`/api/books/${id}/drafts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: newDraftText.trim(), source: "user_input" }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const draft = await res.json();
+      setDrafts((prev) => [...prev, draft]);
+      setNewDraftText("");
+    } catch (err) {
+      toast.error(String(err));
+    } finally {
+      setAddingDraft(false);
     }
   };
 
@@ -128,6 +205,13 @@ export default function BookDetailPage() {
 
   const isAnalyzing = book.analyzeStatus === "analyzing";
   const isAnalyzeFailed = book.analyzeStatus === "error" || book.analyzeStatus === "failed";
+  const step1Done = Boolean(book.step1CompletedAt);
+
+  // Group drafts by source
+  const draftsBySource = drafts.reduce<Record<string, BookKeywordDraft[]>>((acc, d) => {
+    (acc[d.source] ??= []).push(d);
+    return acc;
+  }, {});
 
   return (
     <div className="max-w-screen-lg mx-auto px-4 py-6 space-y-6">
@@ -142,11 +226,6 @@ export default function BookDetailPage() {
           <p className="text-sm text-muted-foreground">{book.author}</p>
         </div>
         <div className="flex gap-2">
-          {(book.analyzeStatus === "pending" || isAnalyzeFailed) && (
-            <Button size="sm" onClick={analyze}>
-              <Play className="w-3 h-3 mr-1" /> 解析する
-            </Button>
-          )}
           <Button variant="destructive" size="sm" onClick={remove}>
             <Trash2 className="w-3 h-3 mr-1" /> 削除
           </Button>
@@ -184,82 +263,172 @@ export default function BookDetailPage() {
         </Card>
       )}
 
+      {/* ── Step 1: キーワード収集 ── */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">解析用ソース</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <span className="text-xs font-semibold bg-muted px-2 py-0.5 rounded">Step 1</span>
+              キーワード収集
+              {step1Done && (
+                <span className="text-xs text-green-600 font-normal">✓ 完了</span>
+              )}
+            </CardTitle>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={step1Running}
+                onClick={() => runStep1(false)}
+              >
+                {step1Running ? (
+                  <><RefreshCw className="w-3 h-3 mr-1 animate-spin" /> 収集中...</>
+                ) : step1Done ? (
+                  <><RefreshCw className="w-3 h-3 mr-1" /> 差分追加</>
+                ) : (
+                  <><Play className="w-3 h-3 mr-1" /> Step 1 を実行</>
+                )}
+              </Button>
+              {step1Done && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={step1Running}
+                  onClick={() => runStep1(true)}
+                  className="text-muted-foreground"
+                >
+                  <RefreshCw className="w-3 h-3 mr-1" /> 再収集(クリア)
+                </Button>
+              )}
+            </div>
+          </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-1 md:col-span-2">
-              <Label htmlFor="userToc">目次を貼り付け</Label>
-              <Textarea
-                id="userToc"
-                rows={7}
-                value={sourceForm.userToc}
-                onChange={(e) => {
-                  sourceDirtyRef.current = true;
-                  setSourceForm((form) => ({ ...form, userToc: e.target.value }));
-                }}
-                placeholder={"第1章 ...\n第2章 ..."}
-              />
+        <CardContent className="space-y-5">
+          {/* User input fields */}
+          <div className="space-y-3">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">あなたの入力（任意）</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1 md:col-span-2">
+                <Label htmlFor="userToc" className="text-xs">目次を貼り付け</Label>
+                <Textarea
+                  id="userToc"
+                  rows={5}
+                  value={sourceForm.userToc}
+                  onChange={(e) => { sourceDirtyRef.current = true; setSourceForm((f) => ({ ...f, userToc: e.target.value })); }}
+                  placeholder={"第1章 ...\n第2章 ..."}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="userSummary" className="text-xs">要約・感想</Label>
+                <Textarea
+                  id="userSummary"
+                  rows={4}
+                  value={sourceForm.userSummary}
+                  onChange={(e) => { sourceDirtyRef.current = true; setSourceForm((f) => ({ ...f, userSummary: e.target.value })); }}
+                  placeholder="この本の主張、印象に残った内容..."
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="userKeywords" className="text-xs">気になったキーワード（カンマ区切り）</Label>
+                <Textarea
+                  id="userKeywords"
+                  rows={4}
+                  value={sourceForm.userKeywords}
+                  onChange={(e) => { sourceDirtyRef.current = true; setSourceForm((f) => ({ ...f, userKeywords: e.target.value })); }}
+                  placeholder="習慣, 潜在意識, 行動変容..."
+                />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <Label htmlFor="userQuotes" className="text-xs">印象的な引用</Label>
+                <Textarea
+                  id="userQuotes"
+                  rows={3}
+                  value={sourceForm.userQuotes}
+                  onChange={(e) => { sourceDirtyRef.current = true; setSourceForm((f) => ({ ...f, userQuotes: e.target.value })); }}
+                  placeholder="「...」"
+                />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <Label htmlFor="notes" className="text-xs">メモ</Label>
+                <Textarea
+                  id="notes"
+                  rows={3}
+                  value={sourceForm.notes}
+                  onChange={(e) => { sourceDirtyRef.current = true; setSourceForm((f) => ({ ...f, notes: e.target.value })); }}
+                  placeholder="引用、気づき、あとで確認したい点..."
+                />
+              </div>
             </div>
-            <div className="space-y-1">
-              <Label htmlFor="userSummary">自分で書いた要約・読了後感想</Label>
-              <Textarea
-                id="userSummary"
-                rows={6}
-                value={sourceForm.userSummary}
-                onChange={(e) => {
-                  sourceDirtyRef.current = true;
-                  setSourceForm((form) => ({ ...form, userSummary: e.target.value }));
-                }}
-                placeholder="この本の主張、印象に残った内容、重要だと思った概念..."
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="notes">メモ</Label>
-              <Textarea
-                id="notes"
-                rows={6}
-                value={sourceForm.notes}
-                onChange={(e) => {
-                  sourceDirtyRef.current = true;
-                  setSourceForm((form) => ({ ...form, notes: e.target.value }));
-                }}
-                placeholder="引用、気づき、あとで確認したい点..."
-              />
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" onClick={saveSourceFields} disabled={savingSource}>
+                {savingSource ? "保存中..." : "保存"}
+              </Button>
             </div>
           </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={saveSourceFields} disabled={savingSource}>
-              {savingSource ? "保存中..." : "保存"}
-            </Button>
-            <Button size="sm" onClick={saveSourceFieldsAndAnalyze} disabled={isAnalyzing || savingSource}>
-              <Play className="w-3 h-3 mr-1" /> 保存内容で解析
-            </Button>
-          </div>
+
+          {/* Collected drafts */}
+          {drafts.length > 0 && (
+            <div className="space-y-3">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                AI が収集したキーワード ({drafts.length} 件)
+              </p>
+              {Object.entries(draftsBySource).map(([source, items]) => (
+                <div key={source} className="space-y-1">
+                  <p className="text-xs flex items-center gap-1 text-muted-foreground">
+                    {SOURCE_ICONS[source]}
+                    {SOURCE_LABELS[source] ?? source} ({items.length})
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {items.map((d) => (
+                      <span
+                        key={d.id}
+                        className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs bg-muted/40"
+                      >
+                        {d.text.length > 60 ? d.text.slice(0, 60) + "…" : d.text}
+                        <button
+                          onClick={() => deleteDraft(d.id)}
+                          className="text-muted-foreground hover:text-destructive ml-1"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {/* Manual add */}
+              <div className="flex gap-2 pt-1">
+                <Input
+                  value={newDraftText}
+                  onChange={(e) => setNewDraftText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") addDraft(); }}
+                  placeholder="キーワードを手動追加..."
+                  className="text-sm h-8"
+                />
+                <Button size="sm" variant="outline" disabled={addingDraft || !newDraftText.trim()} onClick={addDraft}>
+                  <Plus className="w-3 h-3" />
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 2 button */}
+          {step1Done && (
+            <div className="flex justify-end pt-2 border-t">
+              <Button
+                size="sm"
+                disabled={isAnalyzing}
+                onClick={analyze}
+              >
+                <Brain className="w-3 h-3 mr-1" /> Step 2: 概念抽出へ進む
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {(book.notes || book.userToc || book.userSummary) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">保存済みソース</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {book.userToc && (
-              <SourcePreview title="目次" text={book.userToc} />
-            )}
-            {book.userSummary && (
-              <SourcePreview title="要約・感想" text={book.userSummary} />
-            )}
-            {book.notes && (
-              <SourcePreview title="メモ" text={book.notes} />
-            )}
-          </CardContent>
-        </Card>
-      )}
-
+      {/* Extracted concepts */}
       {concepts.length > 0 && (
         <Card>
           <CardHeader>
@@ -321,15 +490,6 @@ export default function BookDetailPage() {
           </CardContent>
         </Card>
       )}
-    </div>
-  );
-}
-
-function SourcePreview({ title, text }: { title: string; text: string }) {
-  return (
-    <div>
-      <p className="text-xs font-medium text-muted-foreground">{title}</p>
-      <p className="mt-1 text-sm whitespace-pre-wrap">{text}</p>
     </div>
   );
 }

@@ -18,6 +18,9 @@ export const books = sqliteTable("books", {
   notes: text("notes"),
   userToc: text("user_toc"),
   userSummary: text("user_summary"),
+  userKeywords: text("user_keywords"),
+  userQuotes: text("user_quotes"),
+  step1CompletedAt: text("step1_completed_at"),
   analyzeStatus: text("analyze_status", { enum: ["pending", "analyzing", "done", "error", "failed"] }).notNull().default("pending"),
   analyzeError: text("analyze_error"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
@@ -98,6 +101,20 @@ export const conceptRelations = sqliteTable("concept_relations", {
   bookId: integer("book_id").references(() => books.id, { onDelete: "set null" }),
 });
 
+export const KEYWORD_DRAFT_SOURCES = ["web_search", "book_db", "user_input", "user_toc", "user_summary"] as const;
+export type KeywordDraftSource = typeof KEYWORD_DRAFT_SOURCES[number];
+
+export const bookKeywordDrafts = sqliteTable("book_keyword_drafts", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  bookId: integer("book_id").notNull().references(() => books.id, { onDelete: "cascade" }),
+  source: text("source", { enum: KEYWORD_DRAFT_SOURCES }).notNull(),
+  text: text("text").notNull(),
+  sourceUrl: text("source_url"),
+  evidenceText: text("evidence_text"),
+  deletedByUser: integer("deleted_by_user", { mode: "boolean" }).notNull().default(false),
+  createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
+});
+
 export type Book = typeof books.$inferSelect;
 export type NewBook = typeof books.$inferInsert;
 export type Concept = typeof concepts.$inferSelect;
@@ -106,3 +123,5 @@ export type BookConcept = typeof bookConcepts.$inferSelect;
 export type ExtractionRun = typeof extractionRuns.$inferSelect;
 export type RawConcept = typeof rawConcepts.$inferSelect;
 export type ConceptRelation = typeof conceptRelations.$inferSelect;
+export type BookKeywordDraft = typeof bookKeywordDrafts.$inferSelect;
+export type NewBookKeywordDraft = typeof bookKeywordDrafts.$inferInsert;

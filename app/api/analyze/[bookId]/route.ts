@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { books, concepts, bookConcepts, conceptRelations, extractionRuns, rawConcepts } from "@/lib/db/schema";
+import { books, concepts, bookConcepts, conceptRelations, extractionRuns, rawConcepts, bookKeywordDrafts } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { extractConcepts } from "@/lib/llm/extract-concepts";
 import type { TargetCount } from "@/lib/llm/extract-concepts";
@@ -32,7 +32,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ bookId:
     .set({ analyzeStatus: "analyzing", analyzeError: null })
     .where(eq(books.id, book.id));
 
-  runAnalysis(book.id, book.title, book.author, book.notes ?? "", book.userToc ?? "", book.userSummary ?? "", model).catch(() => {});
+  runAnalysis(book.id, book.title, book.author, book.notes ?? "", book.userToc ?? "", book.userSummary ?? "", model, book.step1CompletedAt ?? null).catch(() => {});
 
   return NextResponse.json({ status: "started" });
 }
@@ -45,7 +45,8 @@ async function runAnalysis(
   notes: string,
   userToc: string,
   userSummary: string,
-  model = "gpt-4o-mini"
+  model = "gpt-4o-mini",
+  step1CompletedAt: string | null = null
 ) {
   const db = getDb();
   let extractionRunId: number | null = null;
@@ -94,19 +95,36 @@ async function runAnalysis(
       return;
     }
 
-    // Step 2: Build structured extraction context (current book only — no existing concepts).
-    const bookMetadata = await fetchBookMetadata(title, author);
-    searchQuality = measureSearchQuality({ title, author, bookMetadata });
-    sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary });
-    if (sourceQuality.total < 600) {
-      const webSources = await enrichFromWebSearch(title, author);
-      if (webSources.length > 0) {
-        bookMetadata.sources.push(...webSources);
-        sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary });
+    // Step 2: Build structured extraction context.
+    // When Step 1 has been completed, use persisted drafts as the source (no re-fetch).
+    let bookMetadata: import("@/lib/metadata/fetch-book-metadata").BookMetadata;
+    let enrichedNotes: string;
+
+    if (step1CompletedAt) {
+      const drafts = await db
+        .select()
+        .from(bookKeywordDrafts)
+        .where(and(eq(bookKeywordDrafts.bookId, bookId), eq(bookKeywordDrafts.deletedByUser, false)));
+
+      bookMetadata = buildMetadataFromDrafts(drafts);
+      searchQuality = measureSearchQuality({ title, author, bookMetadata });
+    } else {
+      bookMetadata = await fetchBookMetadata(title, author);
+      searchQuality = measureSearchQuality({ title, author, bookMetadata });
+      sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary });
+      if (sourceQuality.total < 600) {
+        const webSources = await enrichFromWebSearch(title, author);
+        if (webSources.length > 0) {
+          bookMetadata.sources.push(...webSources);
+          sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary });
+        }
       }
     }
-    targetCount = targetCountForSourceQuality(sourceQuality);
-    const enrichedNotes = buildExtractionSource({ title, author, notes, userToc, userSummary, bookMetadata });
+
+    targetCount = targetCountForSourceQuality(
+      sourceQuality ?? measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary })
+    );
+    enrichedNotes = buildExtractionSource({ title, author, notes, userToc, userSummary, bookMetadata });
     sourceQuality = measureSourceQuality({ bookMetadata, userNotes: notes, userToc, userSummary, sourceText: enrichedNotes });
 
     if (sourceQuality.total < 200) {
@@ -790,5 +808,64 @@ async function saveCrossBookRelations(
       evidence: `${relation.evidence}\n\nReason: ${relation.reason}\nConfidence: ${relation.confidence.toFixed(2)}`,
     });
     savedRelationKeys.add(key);
+  }
+}
+
+function buildMetadataFromDrafts(
+  drafts: import("@/lib/db/schema").BookKeywordDraft[]
+): import("@/lib/metadata/fetch-book-metadata").BookMetadata {
+  const bySource = new Map<string, typeof drafts>();
+  for (const d of drafts) {
+    const key = d.sourceUrl ?? d.source;
+    (bySource.get(key) ?? bySource.set(key, []).get(key)!).push(d);
+  }
+
+  const sources: import("@/lib/metadata/fetch-book-metadata").MetadataSource[] = [];
+  for (const [, items] of bySource) {
+    const first = items[0];
+    const toc: string[] = [];
+    const subjects: string[] = [];
+    const descriptions: string[] = [];
+
+    for (const item of items) {
+      if (item.source === "user_toc") {
+        toc.push(item.text);
+      } else if (item.source === "user_input") {
+        subjects.push(item.text);
+      } else {
+        // web_search / book_db / user_summary — treat long text as description, short as subject
+        if (item.text.length > 80) {
+          descriptions.push(item.text);
+        } else {
+          subjects.push(item.text);
+        }
+      }
+    }
+
+    sources.push({
+      source: first.sourceUrl ? `Web: ${hostnameFromUrl(first.sourceUrl)}` : first.source,
+      description: descriptions.join("\n\n"),
+      tableOfContents: toc,
+      subjects,
+      review: "",
+      sourceUrl: first.sourceUrl ?? null,
+    });
+  }
+
+  return {
+    isbn: null,
+    subtitle: "",
+    publisher: "",
+    publishedDate: "",
+    pageCount: null,
+    sources,
+  };
+}
+
+function hostnameFromUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "unknown";
   }
 }

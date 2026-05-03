@@ -50,8 +50,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         notes: body.notes ?? null,
         userToc: body.userToc ?? null,
         userSummary: body.userSummary ?? null,
-        analyzeStatus: "pending",
-        analyzeError: null,
+        userKeywords: body.userKeywords ?? null,
+        userQuotes: body.userQuotes ?? null,
       })
       .where(eq(books.id, Number(id)))
       .returning();

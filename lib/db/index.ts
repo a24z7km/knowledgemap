@@ -128,6 +128,8 @@ function getDb() {
   ensureConceptRelationUniqueIndexes(sqlite);
   ensureExtractionRunIndexes(sqlite);
   ensureRawConceptIndexes(sqlite);
+  ensureBookStep1Columns(sqlite);
+  ensureBookKeywordDraftsTable(sqlite);
 
   return _db;
 }
@@ -554,6 +556,39 @@ function ensureRawConceptIndexes(sqlite: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_raw_concepts_extraction_run
     ON raw_concepts (extraction_run_id);
+  `);
+}
+
+function ensureBookStep1Columns(sqlite: Database.Database) {
+  const columns = sqlite.prepare("PRAGMA table_info(books)").all() as { name: string }[];
+  const columnNames = new Set(columns.map((c) => c.name));
+
+  if (!columnNames.has("user_keywords")) {
+    sqlite.exec("ALTER TABLE books ADD COLUMN user_keywords TEXT");
+  }
+  if (!columnNames.has("user_quotes")) {
+    sqlite.exec("ALTER TABLE books ADD COLUMN user_quotes TEXT");
+  }
+  if (!columnNames.has("step1_completed_at")) {
+    sqlite.exec("ALTER TABLE books ADD COLUMN step1_completed_at TEXT");
+  }
+}
+
+function ensureBookKeywordDraftsTable(sqlite: Database.Database) {
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS book_keyword_drafts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      source TEXT NOT NULL CHECK(source IN ('web_search','book_db','user_input','user_toc','user_summary')),
+      text TEXT NOT NULL,
+      source_url TEXT,
+      evidence_text TEXT,
+      deleted_by_user INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_book_keyword_drafts_book
+    ON book_keyword_drafts (book_id);
   `);
 }
 
