@@ -3,6 +3,7 @@ import type { ExtractedConcept } from "./extract-concepts";
 import { isRelationType, RELATION_TYPES, type RelationType } from "@/lib/relations";
 import { chatWithRetry } from "./openai-client";
 import { isValidRelationEvidence } from "@/lib/relations/evidence";
+import { parseToolArgumentsArray } from "./tool-arguments";
 
 export interface ExtractedRelation {
   from: string;
@@ -131,14 +132,14 @@ Return up to ${maxRelations} evidence-backed relationships. It is better to retu
     throw new Error("LLM did not return function call");
   }
 
-  const input = JSON.parse(toolCall.function.arguments) as { relations: ExtractedRelation[] };
+  const relations = parseToolArgumentsArray<ExtractedRelation>(toolCall.function.arguments, "relations");
 
   // Build case-insensitive lookup: normalized name -> original name
   const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, "");
   const nameMap = new Map<string, string>();
   for (const c of concepts) nameMap.set(normalize(c.name), c.name);
 
-  const resolved = input.relations.flatMap((r) => {
+  const resolved = relations.flatMap((r) => {
     const from = nameMap.get(normalize(r.from));
     const to = nameMap.get(normalize(r.to));
     if (!from || !to || from === to) return [];

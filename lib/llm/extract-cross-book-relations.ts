@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { isRelationType, RELATION_TYPES, type RelationType } from "@/lib/relations";
 import { chatWithRetry } from "./openai-client";
 import { isValidRelationEvidence } from "@/lib/relations/evidence";
+import { parseToolArgumentsArray } from "./tool-arguments";
 
 export interface CrossBookConcept {
   id: number;
@@ -137,14 +138,14 @@ Return up to ${maxRelations} cross-book relationships that would make the map fe
     throw new Error("LLM did not return function call");
   }
 
-  const input = JSON.parse(toolCall.function.arguments) as { relations?: unknown[] };
+  const relations = parseToolArgumentsArray<unknown>(toolCall.function.arguments, "relations");
   const newNames = new Set(newConcepts.map((concept) => concept.name));
   const existingNames = new Set(existingConcepts.map((concept) => concept.name));
   const conceptByName = new Map([...newConcepts, ...existingConcepts].map((concept) => [concept.name, concept]));
   const seen = new Set<string>();
   const perNewConcept = new Map<string, number>();
 
-  return (input.relations ?? []).flatMap((value) => {
+  return relations.flatMap((value) => {
     const relation = normalizeRelation(value);
     if (!relation || relation.confidence < 0.65) return [];
 

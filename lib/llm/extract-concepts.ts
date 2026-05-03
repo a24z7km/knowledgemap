@@ -11,6 +11,7 @@ import {
 } from "@/lib/concept-metadata";
 import OpenAI from "openai";
 import { chatWithRetry } from "./openai-client";
+import { parseToolArgumentsArray } from "./tool-arguments";
 
 export type SourceType =
   | "metadata"
@@ -337,9 +338,9 @@ Return ${targetCount.min}-${targetCount.max} candidates if there is enough sourc
     throw new Error("LLM did not return function call");
   }
 
-  const input = JSON.parse(toolCall.function.arguments) as { concepts: LlmExtractedConcept[] };
+  const concepts = parseToolArgumentsArray<LlmExtractedConcept>(toolCall.function.arguments, "concepts");
   const { sourceText, metadataText } = splitSourceAndMetadataText(notes);
-  const all = normalizeExtractedConcepts(input.concepts ?? [], sourceText, metadataText);
+  const all = normalizeExtractedConcepts(concepts, sourceText, metadataText);
   return all;
 }
 

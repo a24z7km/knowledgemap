@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { conceptSimilarity } from "@/lib/concepts/normalize";
 import { isRelationType, RELATION_TYPES, type RelationType } from "@/lib/relations";
 import { chatWithRetry } from "./openai-client";
+import { parseToolArgumentsArray } from "./tool-arguments";
 
 export interface GlobalRelationConcept {
   id: number;
@@ -134,12 +135,12 @@ Return up to ${maxRelations} global semantic relations. Prefer around ${target} 
     throw new Error("LLM did not return function call");
   }
 
-  const input = JSON.parse(toolCall.function.arguments) as { relations?: unknown[] };
+  const relations = parseToolArgumentsArray<unknown>(toolCall.function.arguments, "relations");
   const conceptIds = new Set(concepts.map((concept) => concept.id));
   const candidateKeys = new Set(candidatePairs.map((pair) => pairKey(pair.a.id, pair.b.id)));
   const seen = new Set<string>();
 
-  return (input.relations ?? []).flatMap((value) => {
+  return relations.flatMap((value) => {
     const relation = normalizeRelation(value);
     if (!relation) return [];
     if (!conceptIds.has(relation.fromConceptId) || !conceptIds.has(relation.toConceptId)) return [];

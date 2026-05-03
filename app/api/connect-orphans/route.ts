@@ -4,6 +4,7 @@ import { concepts, bookConcepts, conceptRelations } from "@/lib/db/schema";
 import { eq, sql } from "drizzle-orm";
 import { normalizeConceptRelation, relationIdentityKey, RELATION_TYPES, type RelationType, isRelationType } from "@/lib/relations";
 import { chatWithRetry } from "@/lib/llm/openai-client";
+import { parseToolArgumentsArray } from "@/lib/llm/tool-arguments";
 
 const ANCHOR_LIMIT = 40; // ネットワーク側から渡す代表概念数
 const BATCH_SIZE = 10;   // 孤立概念を何件ずつLLMに投げるか
@@ -152,8 +153,7 @@ For each isolated concept, find 1-3 meaningful connections to anchor concepts. R
 
       const toolCall = response.choices[0]?.message?.tool_calls?.[0];
       if (toolCall?.type === "function") {
-        const parsed = JSON.parse(toolCall.function.arguments) as { relations: typeof rawRelations };
-        rawRelations = parsed.relations ?? [];
+        rawRelations = parseToolArgumentsArray<(typeof rawRelations)[number]>(toolCall.function.arguments, "relations");
       }
     } catch {
       // バッチ失敗はスキップして次へ
