@@ -12,6 +12,7 @@ import { ArrowLeft, Play, Trash2, Brain, Square } from "lucide-react";
 import type { Book } from "@/lib/db/schema";
 import { domainBadgeClass } from "@/lib/domains";
 import { conceptMetadataLabels } from "@/lib/concept-metadata";
+import { analysisErrorMessage, analysisErrorTitle } from "@/lib/analysis-errors";
 
 interface ConceptRow {
   id: number;
@@ -121,8 +122,9 @@ export default function BookDetailPage() {
 
       {isAnalyzeFailed && (
         <Card className="border-red-200 bg-red-50">
-          <CardContent className="py-3 text-sm text-red-700">
-            解析エラー: {book.analyzeError}
+          <CardContent className="py-3 text-sm text-red-700 space-y-1">
+            <p className="font-medium">{analysisErrorTitle(book.analyzeError)}</p>
+            <p>{analysisErrorMessage(book.analyzeError)}</p>
           </CardContent>
         </Card>
       )}

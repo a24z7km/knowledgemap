@@ -19,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Download, Plus, Trash2, Play, Link as LinkIcon, Upload, CheckSquare, Square } from "lucide-react";
 import type { Book, ExtractionRun } from "@/lib/db/schema";
+import { analysisErrorMessage, analysisErrorTitle } from "@/lib/analysis-errors";
 
 const STATUS_MAP = {
   read: { label: "読了", color: "default" as const },
@@ -510,6 +511,11 @@ function AnalysisRunSummary({ run }: { run: ExtractionRun | null }) {
         <span className="shrink-0">{EXTRACTION_RUN_STATUS_LABELS[run.status]}</span>
       </div>
       <p className="mt-0.5">実施日時: {formatAnalysisDate(analyzedAt)}</p>
+      {run.status === "failed" && (
+        <p className="mt-0.5 text-destructive">
+          {analysisErrorTitle(run.error)}: {analysisErrorMessage(run.error)}
+        </p>
+      )}
     </div>
   );
 }
