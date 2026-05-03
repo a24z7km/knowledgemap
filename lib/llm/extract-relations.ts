@@ -88,11 +88,23 @@ Relationship types:
 - example_of: A is an example, instance, case, or manifestation of B
 - reframes: A changes the interpretation, lens, framing, or meaning of B
 - mitigates: A reduces, handles, or protects against a risk, bias, problem, or failure mode in B
-- related: last resort only when the relationship is useful but none of the above applies
+- related: last resort only when a real semantic pattern below applies but no specific type fits
 
-Create enough edges for a readable knowledge map:
-- Every important concept should connect to 2-4 other concepts when reasonable.
-- Prefer the most specific relationship type. Use related only as the final fallback.
+Create only semantic edges. A relation must match at least one of these patterns:
+- framework/component
+- parent/child concept
+- method/purpose
+- problem/solution
+- cause/effect
+- prerequisite/application
+- contrast/tradeoff
+- same framework siblings
+
+Rules:
+- Do not create a relation only because two concepts appear in the same book.
+- Do not create a relation only because two concepts share the same domain.
+- If concepts are merely similar, do not create a relation edge. Similarity is handled separately by the layout layer.
+- Prefer the most specific relationship type. Use related only as the final fallback when one of the semantic patterns applies.
 - Use prerequisite, extends, applies_to, operationalizes, example_of, reframes, and mitigates for directional relationships.
 - Use same_family_as for peer concepts that belong to the same argument, framework, practice, or problem.
 - Use contrasts_with for distinctions and tradeoffs that are not strict contradictions.
@@ -109,7 +121,7 @@ Create enough edges for a readable knowledge map:
 
 ${conceptList}
 
-Return up to ${maxRelations} evidence-backed relationships. Prefer a connected graph over isolated concept clusters only when the source evidence supports the relation. If a concept is a framework, principle, habit, or mental model central to the book, connect it to multiple relevant concepts when evidence is available.`,
+Return up to ${maxRelations} evidence-backed relationships. It is better to return fewer edges than to create noisy similarity, same-book, or same-domain edges. If a concept is a framework, principle, habit, or mental model central to the book, connect it to components or applications when evidence is available.`,
       },
     ],
   });
@@ -183,28 +195,21 @@ Return up to ${maxRelations} evidence-backed relationships. Prefer a connected g
       from,
       to,
       type,
-      evidence: "Heuristic fallback relation based on same book context.",
+      evidence: "Heuristic fallback relation based on framework/component naming pattern.",
       confidence: 0.35,
       source: "fallback",
     });
   };
 
-  for (const concept of rankedConcepts) {
-    const sameDomainConcepts = rankedConcepts
-      .filter((candidate) => candidate.name !== concept.name && candidate.domain === concept.domain)
-      .slice(0, 2);
-
-    for (const candidate of sameDomainConcepts) {
-      addFallbackRelation(concept.name, candidate.name, "same_family_as");
+  for (const parent of rankedConcepts) {
+    for (const child of rankedConcepts) {
+      if (parent.name === child.name) continue;
+      if (!looksLikeFrameworkComponent(parent.name, child.name)) continue;
+      addFallbackRelation(child.name, parent.name, "example_of");
       if (deduped.length + fallbackRelations.length >= minRelations) {
         return [...deduped, ...fallbackRelations];
       }
     }
-  }
-
-  for (let i = 0; i < rankedConcepts.length - 1; i += 1) {
-    addFallbackRelation(rankedConcepts[i].name, rankedConcepts[i + 1].name, "related");
-    if (deduped.length + fallbackRelations.length >= minRelations) break;
   }
 
   return [...deduped, ...fallbackRelations];
@@ -214,4 +219,34 @@ function clampConfidence(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value)
     ? Math.min(1, Math.max(0, value))
     : 0.5;
+}
+
+function looksLikeFrameworkComponent(parent: string, child: string): boolean {
+  const parentKey = normalizeSemanticKey(parent);
+  const childKey = normalizeSemanticKey(child);
+  if (!parentKey || !childKey || parentKey === childKey) return false;
+  if (childKey.includes(parentKey)) return true;
+
+  const parentTokens = semanticTokens(parent);
+  const childTokens = semanticTokens(child);
+  const sharedTokens = parentTokens.filter((token) => childTokens.includes(token));
+  const hasComponentMarker = /\b(habit|step|principle|rule|layer|phase|stage|pillar|level|part|chapter)\s*\d*\b/i.test(child) ||
+    /\b\d+\b/.test(child);
+
+  return hasComponentMarker && sharedTokens.length >= 1;
+}
+
+function normalizeSemanticKey(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^a-z0-9ぁ-んァ-ヶ一-龠]/g, "");
+}
+
+function semanticTokens(value: string): string[] {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .split(/[^a-z0-9ぁ-んァ-ヶ一-龠]+/)
+    .filter((token) => token.length >= 3);
 }
